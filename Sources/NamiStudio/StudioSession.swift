@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Foundation
 import Observation
+import OSLog
 import NamiAudio
 import NamiCore
 import NamiWhisperKit
@@ -63,6 +64,11 @@ public final class StudioSession {
     public private(set) var status = "Your next thought starts here."
     public private(set) var errorMessage: String?
     public private(set) var modelLoaded = false
+    public private(set) var modelPreparing = false
+    public private(set) var modelPreparationError: String?
+    public private(set) var modelPreparationSeconds: Double?
+    public private(set) var captureStartSeconds: Double?
+    public private(set) var firstAudioSeconds: Double?
     public private(set) var elapsed = 0.0
     public private(set) var level = 0.0
     public private(set) var meterHistory = Array(repeating: 0.0, count: 64)
@@ -75,6 +81,7 @@ public final class StudioSession {
     public var selectedPromptID = ""
     public private(set) var prompts: [ReadingPrompt] = []
     public private(set) var playing = false
+    public let debugging: DebuggingSession
 
     @ObservationIgnored private let historyStore: RecordingHistoryStore
     @ObservationIgnored private let engineBuilder: @MainActor (StudioSettings) throws -> any TranscriptionEngine
@@ -84,6 +91,10 @@ public final class StudioSession {
     @ObservationIgnored private let pastePreparer: @MainActor () -> PreparedTranscriptPaste
     @ObservationIgnored private var engine: (any TranscriptionEngine)?
     @ObservationIgnored private var engineKey = ""
+    @ObservationIgnored private var preparation: EnginePreparation?
+    @ObservationIgnored private var preparationID = UUID()
+    @ObservationIgnored private var automaticPreparationEnabled = false
+    private static let startupLog = Logger(subsystem: "local.nami.studio", category: "Startup")
     @ObservationIgnored private var capture: (any AudioCapturing)?
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var ticker: Task<Void, Never>?
@@ -102,6 +113,8 @@ public final class StudioSession {
                 clipboardWriter: (@MainActor (String) -> Bool)? = nil) {
         self.project = project
         self.historyStore = RecordingHistoryStore(directory: historyDirectory ?? RecordingHistoryStore.defaultDirectory)
+        self.debugging = DebuggingSession(directory: historyDirectory?.appendingPathComponent("InternalDebugging")
+            ?? RecordingHistoryStore.defaultDirectory.deletingLastPathComponent().appendingPathComponent("InternalDebugging"))
         self.permissions = permissions ?? StudioPermissions()
         self.pastePreparer = pastePreparer ?? { TranscriptPaster().prepare() }
         self.engineBuilder = engineBuilder ?? { settings in
@@ -167,8 +180,24 @@ public final class StudioSession {
         permissions.refresh()
         if permissions.needsSetup {
             cancel()
+            if debugging.recording { debugging.cancel() }
             stopPlayback()
+        } else if automaticPreparationEnabled && !phase.busy {
+            prepareInBackground()
         }
+    }
+
+    /// Called once by the app at launch. Permission recovery and model changes
+    /// also warm the model automatically; this never opens the microphone.
+    public func prepareForRecording() {
+        automaticPreparationEnabled = true
+        refreshPermissions()
+    }
+
+    private func prepareInBackground() {
+        guard settings.engine != "whisperkit" || !settings.modelFolder.isEmpty else { return }
+        do { _ = try preparationFor(settings) }
+        catch { modelPreparationError = error.localizedDescription }
     }
 
     /// All recording entry points (including global shortcuts) pass this gate
@@ -185,16 +214,25 @@ public final class StudioSession {
 
     private func settingsChanged() {
         if !phase.busy {
-            if engineKey != key(settings) { engine = nil; modelLoaded = false }
+            if engineKey != key(settings) {
+                preparation?.cancel()
+                preparation = nil; preparationID = UUID()
+                engine = nil; modelLoaded = false; modelPreparing = false
+                modelPreparationError = nil; modelPreparationSeconds = nil
+            }
             refreshInput()
+            if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }
         }
         do { try settings.save(project: project) }
         catch { errorMessage = error.localizedDescription }
     }
 
     public func startRecording() {
-        guard !phase.busy, permissionsReady() else { return }
+        let requestedAt = ContinuousClock.now
+        guard !phase.busy, !debugging.isBusy, permissionsReady() else { return }
+        debugging.stopPlayback()
         let id = begin(), date = Date()
+        status = "Starting microphone…"
         let options = settings
         let paste = options.copyWhenFinished && options.pasteWhenFinished ? pastePreparer() : nil
         let prompt = selectedPrompt?.reference ?? ""
@@ -203,22 +241,23 @@ public final class StudioSession {
             var samples: [Float] = []
             var stats = AudioStatistics()
             do {
-                let engine = try await self.preparedEngine(options)
-                try self.check(id)
-                try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language, onPartial: nil)
                 try self.check(id)
                 self.refreshPermissions()
                 try self.check(id)
                 let capture = self.captureBuilder(options.microphoneUID)
                 self.capture = capture
-                self.status = "Requesting microphone access…"
                 let stream = try await capture.start()
                 try self.check(id)
+                self.captureStartSeconds = Self.seconds(since: requestedAt)
+                Self.startupLog.info("Microphone started after \(self.captureStartSeconds!, privacy: .public) seconds")
                 self.inputName = capture.inputDescription
                 self.phase = .recording
                 self.status = "Listening. Speak naturally."
                 let startedAt = ContinuousClock.now
                 let maximum = options.timed ? min(60, max(5, options.duration)) : 60
+                // Capture must never wait for the model. Drain the stream into
+                // our bounded recording buffer while preparation runs separately.
+                let preparation = try self.preparationFor(options, retryFailure: true)
                 self.ticker = Task { [weak self] in
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(50))
@@ -229,14 +268,16 @@ public final class StudioSession {
                 }
                 for try await chunk in stream {
                     try self.check(id)
+                    if self.firstAudioSeconds == nil {
+                        self.firstAudioSeconds = Self.seconds(since: requestedAt)
+                        Self.startupLog.info("First audio received after \(self.firstAudioSeconds!, privacy: .public) seconds")
+                    }
                     // Bound audio by frames too: hardware buffers can arrive just after the timer.
                     let remaining = Int(maximum * AudioChunk.sampleRate) - samples.count
                     guard remaining > 0 else { self.stopRecording(); break }
                     let values = Array(chunk.samples.prefix(remaining))
-                    let timestamp = Double(samples.count) / AudioChunk.sampleRate
                     samples += values
                     stats.append(values)
-                    try await engine.append(AudioChunk(samples: values, timestamp: timestamp), sessionID: id)
                     var instant = AudioStatistics(); instant.append(values)
                     self.level = max(0, min(1, (instant.rmsDBFS + 60) / 60))
                     self.meterHistory.removeFirst(); self.meterHistory.append(self.level)
@@ -256,6 +297,18 @@ public final class StudioSession {
                 _ = self.archive(id: id, date: date, text: "", samples: samples, statistics: stats,
                                  input: self.inputName, options: options, prompt: prompt, outcome: .interrupted)
                 self.saveExtraAudioIfRequested(samples, options: options, id: id)
+                if !self.modelLoaded { self.status = "Waiting for the model. Your audio is kept." }
+                let engine = try await preparation.value()
+                try self.check(id)
+                self.refreshPermissions()
+                try self.check(id)
+                self.status = "Turning your audio into text…"
+                try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language, onPartial: nil)
+                for offset in stride(from: 0, to: samples.count, by: 1600) {
+                    try self.check(id)
+                    try await engine.append(AudioChunk(samples: Array(samples[offset..<min(samples.count, offset + 1600)]),
+                        timestamp: Double(offset) / AudioChunk.sampleRate), sessionID: id)
+                }
                 let text = try await engine.finish(sessionID: id)
                 try self.check(id)
                 self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
@@ -271,7 +324,8 @@ public final class StudioSession {
     }
 
     public func transcribeFile(_ url: URL) {
-        guard !phase.busy, permissionsReady() else { return }
+        guard !phase.busy, !debugging.isBusy, permissionsReady() else { return }
+        debugging.stopPlayback()
         let id = begin(), date = Date(), options = settings
         operation = Task { [weak self] in
             guard let self else { return }
@@ -318,6 +372,12 @@ public final class StudioSession {
         capture?.stop()
     }
 
+    func startDebugRecording() {
+        guard !phase.busy, !debugging.isBusy, permissionsReady() else { return }
+        stopPlayback()
+        debugging.startRecording(microphoneUID: settings.microphoneUID, language: settings.language)
+    }
+
     public func toggleRecording() {
         switch phase {
         case .idle, .failed: startRecording()
@@ -352,7 +412,8 @@ public final class StudioSession {
 
     public func togglePlayback() {
         if playing { stopPlayback(); return }
-        guard !phase.busy, let run = selectedRun else { return }
+        guard !phase.busy, !debugging.isBusy, let run = selectedRun else { return }
+        debugging.stopPlayback()
         do {
             if run.samples.isEmpty, let url = run.savedURL {
                 player = try AVAudioPlayer(contentsOf: url)
@@ -378,23 +439,43 @@ public final class StudioSession {
         stopPlayback()
         errorMessage = nil; phase = .preparing; status = "Preparing the local model…"
         elapsed = 0; capturedSeconds = 0; level = 0; averageDB = -.infinity
+        captureStartSeconds = nil; firstAudioSeconds = nil
         meterHistory = Array(repeating: 0, count: 64)
         let id = UUID(); activeID = id; stoppedAt = nil
         return id
     }
 
     private func preparedEngine(_ options: StudioSettings) async throws -> any TranscriptionEngine {
+        try await preparationFor(options, retryFailure: true).value()
+    }
+
+    private func preparationFor(_ options: StudioSettings, retryFailure: Bool = false) throws -> EnginePreparation {
         let nextKey = key(options)
-        if engine == nil || engineKey != nextKey {
-            engine = try engineBuilder(options); engineKey = nextKey; modelLoaded = false
+        if let preparation, engineKey == nextKey, !(retryFailure && preparation.failed) {
+            return preparation
         }
-        guard let engine else { throw EngineError.notPrepared }
-        if !modelLoaded {
-            status = "Loading the model. The first run can take a few minutes…"
-            try await engine.prepare()
-            modelLoaded = true
+        let nextEngine = try engineBuilder(options)
+        preparation?.cancel()
+        engine = nextEngine; engineKey = nextKey
+        modelLoaded = false; modelPreparing = true; modelPreparationError = nil
+        modelPreparationSeconds = nil
+        let id = UUID(), startedAt = ContinuousClock.now
+        preparationID = id
+        let next = EnginePreparation(engine: nextEngine) { [weak self] result in
+            guard let self, self.preparationID == id else { return }
+            self.modelPreparing = false
+            self.modelPreparationSeconds = Self.seconds(since: startedAt)
+            switch result {
+            case .success:
+                self.modelLoaded = true
+                Self.startupLog.info("Model prepared in \(self.modelPreparationSeconds!, privacy: .public) seconds")
+            case .failure(let error):
+                self.modelPreparationError = error.localizedDescription
+                Self.startupLog.error("Model preparation failed")
+            }
         }
-        return engine
+        preparation = next
+        return next
     }
 
     private func check(_ id: UUID) throws {
@@ -478,6 +559,7 @@ public final class StudioSession {
     private func cleanup(_ id: UUID) {
         guard activeID == id else { return }
         activeID = nil; operation = nil; ticker?.cancel(); ticker = nil; level = 0
+        if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }
     }
     private func key(_ options: StudioSettings) -> String { options.engine + "|" + options.modelFolder }
     private static func seconds(since start: ContinuousClock.Instant) -> Double {

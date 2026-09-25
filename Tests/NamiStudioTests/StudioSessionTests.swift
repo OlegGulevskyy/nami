@@ -20,10 +20,12 @@ import NamiAudio
     var inputDescription = "Synthetic test input"
     var starts = 0
     var stops = 0
+    var startDelay: Duration = .zero
     var continuation: AsyncThrowingStream<AudioChunk, Error>.Continuation?
     func start() async throws -> AsyncThrowingStream<AudioChunk, Error> {
         starts += 1
-        let pair = AsyncThrowingStream<AudioChunk, Error>.makeStream()
+        try await Task.sleep(for: startDelay)
+        let pair = AsyncThrowingStream<AudioChunk, Error>.makeStream(bufferingPolicy: .bufferingOldest(128))
         continuation = pair.continuation
         return pair.stream
     }
@@ -37,15 +39,38 @@ import NamiAudio
     let capabilities = EngineCapabilities(incrementalProcessing: false, requiresNetwork: false)
     var prepares = 0
     var prepareDelay: Duration = .zero
+    var releasePrepare = true
+    var prepareFailure = false
+    var ignorePrepareCancellation = false
+    var prepared = false
     var finishDelay: Duration = .zero
     var waitingForFinish = false
     var releaseFinish = true
     var transcript = "The whole thought, from beginning to end."
     var fail = false
     var sampleCount = 0
-    func prepare() async throws { prepares += 1; try await Task.sleep(for: prepareDelay) }
-    func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws { sampleCount = 0 }
-    func append(_ chunk: AudioChunk, sessionID: UUID) async throws { sampleCount += chunk.samples.count }
+    var receivedSamples: [Float] = []
+    func prepare() async throws {
+        prepares += 1
+        try await Task.sleep(for: prepareDelay)
+        while !releasePrepare {
+            if ignorePrepareCancellation {
+                // Complete even after invalidation, like an uncooperative SDK load.
+                await Task.yield()
+            } else { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        if prepareFailure { throw EngineError.modelUnavailable("Test preparation failure") }
+        prepared = true
+    }
+    func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {
+        #expect(prepared)
+        sampleCount = 0; receivedSamples = []
+    }
+    func append(_ chunk: AudioChunk, sessionID: UUID) async throws {
+        #expect(chunk.timestamp == Double(sampleCount) / AudioChunk.sampleRate)
+        sampleCount += chunk.samples.count
+        receivedSamples += chunk.samples
+    }
     func finish(sessionID: UUID) async throws -> String {
         waitingForFinish = true
         while !releaseFinish { try await Task.sleep(for: .milliseconds(5)) }
@@ -104,11 +129,11 @@ import NamiAudio
         try await waitUntil { session.phase == .idle && !panel.isVisible }
     }
 
-    @Test func preparationCancellationAndFailureDismissIndicator() async throws {
+    @Test func microphoneStartupCancellationAndFailureDismissIndicator() async throws {
         _ = NSApplication.shared
         let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
         let engine = TestEngine(), capture = TestCapture()
-        engine.prepareDelay = .seconds(1)
+        capture.startDelay = .seconds(1)
         let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
                                     clipboardWriter: { _ in true })
         let indicator = RecordingIndicatorController(session: session)
@@ -118,9 +143,9 @@ import NamiAudio
         #expect(session.phase == .preparing)
         session.cancel()
         try await waitUntil { session.phase == .idle && indicator.panel?.isVisible == false }
-        #expect(capture.starts == 0)
+        #expect(capture.continuation == nil)
 
-        engine.prepareDelay = .zero
+        capture.startDelay = .zero
         engine.fail = true
         session.startRecording()
         try await waitUntil { session.phase == .recording && indicator.panel?.isVisible == true }
@@ -602,7 +627,7 @@ private func projectDirectory() throws -> URL {
     #expect(session.runs.isEmpty)
 }
 
-@Test @MainActor func permissionRevokedWhileModelLoadsNeverOpensMicrophone() async throws {
+@Test @MainActor func permissionRevokedDuringBackgroundWarmupNeverOpensMicrophone() async throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let engine = TestEngine(), capture = TestCapture()
     engine.prepareDelay = .milliseconds(50)
@@ -611,10 +636,12 @@ private func projectDirectory() throws -> URL {
         requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: permissions,
         engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
-    session.startRecording()
+    session.settings.engine = "fake"
+    session.prepareForRecording()
     try await waitUntil { engine.prepares == 1 }
     state.inputMonitoring = false
-    try await waitUntil { !session.phase.busy }
+    session.refreshPermissions()
+    session.startRecording()
     #expect(capture.starts == 0)
     #expect(permissions.needsSetup)
 }
@@ -775,4 +802,218 @@ private func projectDirectory() throws -> URL {
     #expect(session.selectedRun?.transcript == engine.transcript)
     #expect(session.selectedRun?.samples.count == 1600)
     #expect(copies == [engine.transcript])
+}
+
+// Deterministic capture-start measurement; the synthetic microphone opens immediately.
+@Test @MainActor func captureStartLatencyDiagnostic() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    for _ in 0..<3 {
+        let engine = TestEngine(), capture = TestCapture()
+        engine.prepareDelay = .seconds(1)
+        let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+            permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+            clipboardWriter: { _ in true })
+        let start = ContinuousClock.now
+        session.startRecording()
+        try await waitUntil { session.phase == .recording }
+        print("Capture-start diagnostic (1s model preparation): \(start.duration(to: .now))")
+        session.cancel()
+        try await waitUntil { !session.phase.busy }
+    }
+}
+
+@Test @MainActor func startupWarmsOnceWithoutOpeningMicrophoneAndRetainsModel() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    engine.releasePrepare = false
+    defer { engine.releasePrepare = true }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { _ in true })
+    session.settings.engine = "fake"
+    session.prepareForRecording()
+    session.prepareForRecording()
+    session.refreshPermissions()
+    try await waitUntil { engine.prepares == 1 }
+    #expect(session.phase == .idle && session.modelPreparing && !session.modelLoaded)
+    #expect(capture.starts == 0)
+    engine.releasePrepare = true
+    try await waitUntil { session.modelLoaded }
+    session.settings.language = "fr"
+    session.settings.duration = 30
+    session.refreshPermissions()
+    #expect(!session.modelPreparing && engine.prepares == 1)
+    #expect(capture.starts == 0)
+    #expect(session.modelPreparationSeconds != nil)
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    session.cancel()
+    try await waitUntil { !session.phase.busy }
+    #expect(session.modelLoaded && engine.prepares == 1)
+}
+
+@Test @MainActor func coldModelCannotDelayCaptureOrLoseFirstSamples() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    engine.releasePrepare = false
+    defer { engine.releasePrepare = true }
+    var copies: [String] = []
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { copies.append($0); return true })
+    session.settings.engine = "fake"
+    session.prepareForRecording()
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    #expect(!engine.prepared && engine.prepares == 1)
+    let first = Array(repeating: Float(0.2), count: 1600)
+    let last = Array(repeating: Float(-0.3), count: 3200)
+    capture.continuation?.yield(AudioChunk(samples: first, timestamp: 0))
+    try await waitUntil { session.capturedSeconds == 0.1 }
+    capture.continuation?.yield(AudioChunk(samples: last, timestamp: 0.1))
+    session.toggleRecording() // Stopping must work before model preparation finishes.
+    try await waitUntil { capture.continuation == nil && session.status.contains("Waiting for the model") }
+    #expect(session.phase == .processing && copies.isEmpty)
+    let saved = try RecordingHistoryStore(directory: session.historyDirectory).load().runs
+    #expect(saved.count == 1)
+    #expect(try AudioFile.read(#require(saved.first?.savedURL)).count == 4800)
+    #expect(session.firstAudioSeconds != nil && session.captureStartSeconds != nil)
+    engine.releasePrepare = true
+    try await waitUntil { !session.phase.busy }
+    #expect(engine.prepares == 1)
+    #expect(engine.receivedSamples == first + last)
+    #expect(session.runs.first?.audioSeconds == 0.3)
+    #expect(copies == [engine.transcript])
+}
+
+@Test @MainActor func cancellingModelWaitKeepsAudioAndNextCaptureCanStartDuringSameLoad() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    engine.releasePrepare = false
+    defer { engine.releasePrepare = true }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { _ in true })
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds > 0 }
+    session.stopRecording()
+    try await waitUntil { session.status.contains("Waiting for the model") }
+    session.cancel()
+    try await waitUntil { session.phase == .idle }
+    #expect(!engine.prepared && session.modelPreparing)
+    #expect(session.runs.first?.outcome == .cancelled)
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.2)
+    try await waitUntil { session.capturedSeconds == 0.2 }
+    engine.releasePrepare = true
+    try await waitUntil { session.modelLoaded }
+    session.stopRecording()
+    try await waitUntil { session.phase == .idle }
+    #expect(engine.prepares == 1 && capture.starts == 2)
+    #expect(session.runs.count == 2 && session.runs.first?.outcome == .completed)
+    #expect(engine.sampleCount == 3200)
+}
+
+@Test @MainActor func failedWarmupPreservesCapturedAudioAndExplicitRetryRecovers() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    engine.releasePrepare = false; engine.prepareFailure = true
+    defer { engine.releasePrepare = true }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { _ in true })
+    session.settings.engine = "fake"
+    session.prepareForRecording()
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds > 0 }
+    session.stopRecording()
+    engine.releasePrepare = true
+    try await waitUntil { session.phase == .failed }
+    #expect(session.runs.first?.outcome == .failed)
+    #expect(try AudioFile.read(#require(session.runs.first?.savedURL)).count == 1600)
+    #expect(session.modelPreparationError != nil && !session.modelLoaded)
+    session.refreshPermissions(); session.prepareForRecording()
+    #expect(engine.prepares == 1) // Background refresh must not loop on failures.
+    engine.prepareFailure = false
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds > 0 }
+    session.stopRecording()
+    try await waitUntil { session.phase == .idle }
+    #expect(engine.prepares == 2 && session.modelLoaded)
+    #expect(session.modelPreparationError == nil)
+}
+
+@Test @MainActor func changingModelWarmsReplacementAndIgnoresLateOldCompletion() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let old = TestEngine(), next = TestEngine(), capture = TestCapture()
+    old.releasePrepare = false; old.ignorePrepareCancellation = true
+    next.releasePrepare = false
+    defer { old.releasePrepare = true; next.releasePrepare = true }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), engineBuilder: { $0.modelFolder == "next" ? next : old },
+        captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+    session.settings.engine = "fake"
+    session.prepareForRecording()
+    try await waitUntil { old.prepares == 1 }
+    session.settings.modelFolder = "next"
+    try await waitUntil { next.prepares == 1 }
+    old.releasePrepare = true
+    try await waitUntil { old.prepared }
+    #expect(!session.modelLoaded && session.modelPreparing && session.modelPreparationError == nil)
+    next.releasePrepare = true
+    try await waitUntil { session.modelLoaded }
+    #expect(capture.starts == 0)
+    #expect(next.prepares == 1 && old.prepares == 1)
+}
+
+@Test @MainActor func startupWaitsForPermissionsThenWarmsAutomatically() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture(), state = TestPermissionState()
+    state.microphone = .denied
+    let permissions = StudioPermissions(microphoneStatus: { state.microphone }, inputMonitoringStatus: { true },
+        requestMicrophone: { Issue.record("Warmup must not request microphone access"); return false },
+        requestInputMonitoring: { false }, openSettings: { _ in false })
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: permissions, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { _ in true })
+    session.settings.engine = "fake"
+    session.prepareForRecording()
+    await Task.yield()
+    #expect(engine.prepares == 0 && capture.starts == 0)
+    state.microphone = .authorized
+    session.refreshPermissions()
+    try await waitUntil { session.modelLoaded }
+    #expect(engine.prepares == 1 && capture.starts == 0 && session.phase == .idle)
+}
+
+@Test @MainActor func slowPreparationDoesNotOverflowBoundedAudioStream() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    engine.releasePrepare = false
+    defer { engine.releasePrepare = true }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { _ in true })
+    session.settings.timed = false
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    // Send more chunks than the capture stream can hold. It must be drained
+    // throughout preparation, not only after the model becomes available.
+    for batch in 0..<25 {
+        for _ in 0..<8 { capture.emit(seconds: 0.1) }
+        try await waitUntil { session.capturedSeconds == Double((batch + 1) * 12800) / 16000 }
+    }
+    #expect(!engine.prepared && session.capturedSeconds == 20)
+    session.stopRecording()
+    engine.releasePrepare = true
+    try await waitUntil { session.phase == .idle }
+    #expect(engine.sampleCount == 320000)
+    #expect(session.runs.first?.audioSeconds == 20)
 }

@@ -43,6 +43,10 @@ provider does not require rewriting recording, UI, or text insertion.
   The current studio uses Option + Command double-tap to start and single-tap
   to stop, with Input Monitoring setup; conventional key shortcuts remain an
   alternative. Hold-to-talk remains future work.
+- Prepare the selected model automatically at startup after permission setup,
+  and retain it while the app runs. Microphone capture must not wait for model
+  loading: buffer speech immediately, preserve it before waiting for transcription,
+  and allow normal stopping/cancellation during background preparation.
 - Fully local transcription after the initial model download. No account,
   telemetry, or automatic cloud fallback; studio history saved locally; CLI audio export is opt-in.
 - Paste the final text into the focused app using the clipboard and simulated
@@ -91,3 +95,19 @@ one without changes to capture, UI, or insertion. Cloud integration, advanced
 cleanup, context reading, other platforms, and distribution are later work.
 
 Progress and evidence live in [TRACKER.md](TRACKER.md).
+
+## Next focus: cleanup and personalization
+
+[SPEC-cleanup.md](SPEC-cleanup.md) defines the proposed next phase: local text
+cleanup before insertion, evaluation of speed and meaning preservation, and
+learning from confirmed user corrections. Follow its [plan](tasks/plan.md) and
+[tasks](tasks/todo.md). This extends the roadmap; it does not mark the original
+recognition or dictation validation gates complete.
+
+The sidebar's **Internal debugging** page is the user-facing evaluation workspace:
+record/import/reuse audio, edit expected transcripts, add/download candidate
+WhisperKit models, and compare selected models on one or all samples. Persist
+samples, audio, and per-run reference snapshots separately from normal history.
+Never automatically copy/paste test results or change the active dictation model.
+Future cleanup evaluation must extend this page; JSON/CLI setup is not required
+of the user.

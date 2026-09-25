@@ -132,7 +132,9 @@ public final class MicrophoneCapture: AudioCapturing {
 
     public func start() async throws -> AsyncThrowingStream<AudioChunk, Error> {
         guard !installed else { throw EngineError.invalidState }
-        guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AudioInputError.permissionDenied }
+        if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
+            guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AudioInputError.permissionDenied }
+        }
         let input = engine.inputNode
         if let deviceUID {
             var device = try AudioInputDevice.deviceID(for: deviceUID)

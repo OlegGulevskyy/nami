@@ -6,6 +6,20 @@ network-denied validation remain pending.
 
 Scope and architecture: [SPEC.md](SPEC.md).
 
+## Next focus — cleanup and personalization
+
+- [x] Prepare the [feature spec](SPEC-cleanup.md), [execution plan](tasks/plan.md),
+  and [ordered task checklist](tasks/todo.md), 2026-09-25.
+- [ ] Compare rules, Apple Foundation Models, and a small MLX candidate on the
+  same verified dictations; record quality, full latency, memory, and fallbacks.
+- [ ] Integrate selected local cleanup before paste, preserving original text,
+  cancellation, focus checks, and deadline fallback.
+- [ ] Add editable personal memory and explicit correction capture; evaluate
+  learning from examples before considering fine-tuning.
+
+No cleanup provider has been selected and no cleanup performance result or
+training claim has been established. Existing POC validation remains pending.
+
 ## Steps
 
 - [x] **0. Define POC:** local-first experiment, replaceable engine, and scope.
@@ -67,6 +81,48 @@ Fill after running the experiment; do not infer measurements.
 
 ## Implementation evidence
 
+- Internal debugging UI simplification: removed introductory copy, repetitive
+  helper labels, idle status, and duplicate sample information. Models collapse
+  by default; adding models uses one menu. Result dates, loading time, language,
+  and reference snapshots are available through an info button. Core controls,
+  error messages, and changed-reference warnings remain visible. Debug build
+  passed and normal/compact SwiftUI snapshots were inspected.
+
+- Internal debugging, 2026-09-25: added the bottom sidebar page with independent
+  recording/import/history samples, autosaved expected transcripts, candidate
+  model selection and downloads, one/all-sample comparisons, WER, per-stage
+  timing, failure reporting, and retained result/reference snapshots. Its files
+  live in Application Support/Nami/InternalDebugging; no automatic copy/paste
+  or changes to dictation settings. Eight focused tests and the full debug suite
+  passed. An opt-in real-model test imported the upstream JFK fixture, compared
+  the configured large-v3-turbo model, and restored the saved result: WER 0,
+  2.24 s preparation and 0.99 s transcription. This is a functional single-pass
+  check, not a user-speech quality or warm-latency gate. Normal/compact page
+  snapshots were inspected. Live microphone and a fresh model download through
+  the new UI remain manual checks. The release app rebuilt and passed Developer
+  ID signature verification; CLI smoke checks passed. Cleanup model adapters are
+  still pending.
+
+- Immediate capture and startup warm-up, 2026-09-25: the app prepares the selected
+  model automatically after permission setup and retains it until exit or a model
+  change. Recording drains audio independently of model loading; stop saves the
+  audio before waiting for transcription. Cancelling a recording cancels only its
+  wait, so background warm-up survives. SDK work runs outside the main actor.
+  Tests cover cold capture, complete sample ordering, bounded stream draining,
+  permission recovery, failure/retry, cancellation, reuse, and stale model loads.
+  Full debug suite passed (real-model check opt-in); the opt-in real-model check
+  separately passed with the 11.87-second synthetic fixture. Its first audio
+  arrived in 0.61 ms while debug model preparation took 68.10 s; the second run
+  reused that model and finished transcription in 1.08 s. Fixture timings exclude
+  real microphone startup and are not a recognition-quality evaluation. The
+  release app built and passed Developer ID signature verification. Hardware
+  shortcut-to-first-audio latency remains to be measured through the new local
+  Startup logs.
+- Startup performance experiment: with a fixed one-second fake model preparation
+  and synthetic microphone, the same isolated three-run diagnostic measured a
+  median recording-start delay of 1.008 s before decoupling and 0.007 s after.
+  Kept the change: recording no longer depends on preparation completing, and
+  correctness tests confirm the beginning of the recording is preserved.
 - Automatic paste, 2026-09-25: recordings capture the foreground app and focused
   Accessibility element, then send ⌘V after successfully copying a nonempty final
   transcript. Changed focus, missing permission, held modifiers, cancellation,

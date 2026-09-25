@@ -268,10 +268,14 @@ public struct StudioSettingsView: View {
                 }
                 HStack(spacing: 8) {
                     Circle().fill(StudioStyle.green.opacity(0.6)).frame(width: 6, height: 6)
-                    Text(session.modelLoaded ? "Loaded and ready to listen" : "Loads when you make your first recording")
+                    Text(session.modelLoaded ? "Loaded and ready" : session.modelPreparing
+                         ? "Preparing in the background…" : "Waiting for model setup")
                 }.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet).padding(.top, 15)
-                Text("The first recording can take a little longer while the model gets ready. After that, it stays loaded for this session.")
+                Text("Nami prepares the model automatically and keeps it loaded while the app is open. You can record while it gets ready; your audio is kept until transcription can start.")
                     .font(.system(size: 13)).lineSpacing(4).foregroundStyle(StudioStyle.quiet).padding(.top, 12)
+                if let error = session.modelPreparationError {
+                    Text(error).font(.system(size: 13)).foregroundStyle(.red).padding(.top, 8)
+                }
             }
         }.disabled(session.phase.busy)
         section("READING PRACTICE") {

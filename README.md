@@ -4,6 +4,48 @@ Nami has a native SwiftUI recording studio and a command-line benchmark harness
 for the local-first dictation app in [SPEC.md](SPEC.md).
 Progress is in [TRACKER.md](TRACKER.md).
 
+Next focus: [transcript cleanup and personalization spec](SPEC-cleanup.md),
+with an [implementation plan](tasks/plan.md) and [task checklist](tasks/todo.md).
+These describe planned work; cleanup and learning are not implemented yet.
+The **Internal debugging** page already supports recording samples and comparing
+speech-recognition models entirely in the app.
+
+## Internal debugging
+
+Open **Internal debugging** at the very bottom of the sidebar. This is a separate
+local test workspace; it never automatically copies or pastes test results and
+does not change your normal dictation model.
+
+1. Choose **Record**, **Import**, or **From History…**. Recordings
+   stop at 60 seconds. Imports and history selections get their own audio copy.
+2. Give the sample a title and enter its **Expected text**: the words you
+   actually said, including hesitations and corrections. Edits save immediately.
+3. Expand **Models**, then use **Add model** to select the dictation model,
+   choose a local folder, or download from Hugging Face.
+   Browsing and downloading explicitly contact Hugging Face; downloaded models
+   and comparisons are local afterward. Downloads and initial preparation can
+   take several minutes. Removing a candidate keeps its files and prior results.
+4. Select models and click **Compare**, or **Compare all** for all saved samples.
+   Each model processes the same audio. Results appear beside your expectation
+   with transcript, word error rate (WER), and transcription time. The info
+   button shows the run date, model-load time, language, and saved reference.
+
+WER ignores case/punctuation and is not a human quality judgment. It can exceed
+100%; missing expectations remain unscored. Each result saves its own expectation
+and language snapshot; a badge marks results made before you edited those fields.
+Timing is one pass per model/sample, with preparation shown separately, not a
+formal warm p95 benchmark or stop-to-paste measurement. Reruns retain older results.
+Failed models show their errors while the rest continue. Cancel rejects late
+results and retains already saved samples/results. Normal dictation cannot start
+while debugging is capturing or running a comparison.
+
+Samples, expectations, candidate model paths, and results persist under
+`~/Library/Application Support/Nami/InternalDebugging`, independently of normal
+history and app rebuilds. Model downloads use its `Models` subfolder. There are
+no JSON files or terminal commands to manage in this workflow. This first page
+compares WhisperKit speech recognition; text-cleanup providers and learning are
+the next stage described in the spec.
+
 ## Open the recording studio
 
 Build and open the app from this directory:
@@ -27,7 +69,7 @@ rebuilt app still shows missing access, switch its permission off and on and reo
 Nami. Recording shortcuts and audio import cannot bypass this setup.
 
 The persistent sidebar contains **History**, **Settings**, **Permissions**, **Local
-model**, and **About Nami**. **Permissions** shows current Microphone, Input Monitoring,
+model**, **About Nami**, and **Internal debugging** at the bottom. **Permissions** shows current Microphone, Input Monitoring,
 and Accessibility access. Use **Allow…** for missing access, or **Manage…** to open the
 corresponding macOS privacy pane and revoke or re-enable access. Status updates when
 you return to Nami. Revoking a required permission stops an active recording.
@@ -36,8 +78,11 @@ you return to Nami. Revoking a required permission stops an active recording.
    manually. All recordings have a 60-second maximum.
 2. Leave English and the configured WhisperKit model selected. **Local model**
    contains the model folder, engine, and optional evaluation reading prompts.
-3. Click **Start recording** and wait for **Listening** before speaking. Initial model preparation can
-   take a few minutes; it stays loaded for subsequent runs in the same app.
+3. Click **Start recording** or use your shortcut. Nami opens the microphone immediately,
+   independently of model loading. The **Listening** indicator confirms capture has started.
+   The model prepares automatically at launch once permissions are granted, and stays loaded
+   while Nami is open. If you record before it is ready, audio is buffered and saved before
+   waiting for transcription; you can still stop or cancel normally.
 4. Watch the timer and live microphone levels. Click **Stop & transcribe**
    early if needed, or wait for the chosen duration. Escape cancels.
 5. The finished transcript is **copied to the clipboard automatically**. When
@@ -76,7 +121,7 @@ count as a tap.
 
 A small floating capsule appears near the bottom of the display under your
 pointer, above the Dock, even while Nami is in the background or minimized.
-It shows **Getting ready…** during model preparation, live microphone waves and
+It briefly shows **Getting ready…** while the microphone opens, live microphone waves and
 a timer while **Listening**, then a **Transcribing…** spinner until the final
 text is ready (and copied/pasted, if enabled). It never takes keyboard focus and
 disappears after completion, failure, or cancellation. Keep Nami running to use
@@ -97,11 +142,24 @@ fields require a regular key with modifiers; they cannot capture modifier-only
 or double-tap gestures. Mode and key assignments persist in macOS app preferences.
 
 Turn off **Stop automatically** for manual stopping (the 60-second safety limit
-still applies). Wait for **Listening** before speaking; shortcuts do nothing
-while preparing, transcribing, or cancelling. Conventional shortcuts trigger once on release. Escape cancels when Nami is focused. Cancelled, failed, and empty
+still applies). Background model preparation does not block recording shortcuts.
+Shortcuts do nothing while the microphone is opening, transcribing, or cancelling.
+Conventional shortcuts trigger once on release. Escape cancels when Nami is focused. Cancelled, failed, and empty
 transcriptions leave the clipboard unchanged. Successful recordings and audio
 imports replace it with the final text when **Copy when finished** is enabled (the default).
 Disable it in Settings to copy individual transcripts manually; this also disables automatic pasting.
+
+Startup timings are logged locally under subsystem `local.nami.studio`, category
+`Startup`: model preparation, recording request to microphone start, and recording
+request to first audio received. These contain timing values, not audio or text.
+Microphone hardware startup is still device-dependent; the model is no longer
+on that path. An opt-in integration test replays an existing audio fixture through
+the real model without opening a microphone or touching the clipboard:
+
+```sh
+NAMI_TEST_MODEL_FOLDER="/path/to/model" NAMI_TEST_AUDIO_FILE="/path/to/fixture.wav" \
+  swift test --filter realModelStartupCapturesBeforeLoadAndReusesWarmModel
+```
 
 **Automatic paste:** click **Allow Accessibility…** in Nami or **Settings**,
 then enable **Nami** in **System Settings → Privacy & Security → Accessibility**.

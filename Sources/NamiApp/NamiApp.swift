@@ -43,13 +43,14 @@ struct NamiApp: App {
         if !args.contains("--snapshot") {
             _recordingIndicator = State(initialValue: RecordingIndicatorController(session: session))
             RecordingShortcuts.install(for: session)
+            session.prepareForRecording()
         }
     }
 
     var body: some Scene {
         Window("Nami · Recording history", id: "studio") {
             StudioView(session: session, page: $page)
-                .onDisappear { session.cancel(); session.stopPlayback() }
+                .onDisappear { session.cancel(); session.stopPlayback(); session.debugging.cancel(); session.debugging.stopPlayback() }
                 .task { await runVisualCheckIfRequested() }
         }
         .defaultSize(width: 1080, height: 850)
@@ -74,6 +75,8 @@ struct NamiApp: App {
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
             try await Task.sleep(for: .milliseconds(300))
             try render(to: output.appendingPathComponent("idle.png"))
+            try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
+                           size: NSSize(width: 1080, height: 850), to: output.appendingPathComponent("debugging-empty.png"))
             let permissionSession = StudioSession(project: session.project, historyDirectory: session.historyDirectory,
                 permissions: StudioPermissions(microphoneStatus: { .notDetermined }, inputMonitoringStatus: { false },
                     accessibilityStatus: { false }, requestAccessibility: { false },
@@ -101,6 +104,11 @@ struct NamiApp: App {
             #if DEBUG
             if args.contains("--design-preview") {
                 session.loadDesignPreviewHistory()
+                session.debugging.loadDesignPreview()
+                try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
+                               size: NSSize(width: 1080, height: 1000), to: output.appendingPathComponent("debugging.png"))
+                try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
+                               size: NSSize(width: 760, height: 850), to: output.appendingPathComponent("debugging-compact.png"))
                 try render(to: output.appendingPathComponent("history.png"))
                 try render(to: output.appendingPathComponent("history-compact.png"), size: NSSize(width: 760, height: 600))
                 try render(to: output.appendingPathComponent("settings-compact.png"), shortcuts: true, size: NSSize(width: 800, height: 720))
@@ -144,6 +152,7 @@ struct NamiApp: App {
 
     @MainActor private func renderView(_ content: AnyView, size: NSSize, to url: URL) throws {
         let view = NSHostingView(rootView: content.frame(width: size.width, height: size.height))
+        view.appearance = NSAppearance(named: .aqua)
         view.frame = NSRect(origin: .zero, size: size)
         view.layoutSubtreeIfNeeded()
         try cacheView(view, to: url)

@@ -70,7 +70,7 @@ public struct RecordingShortcutSettings: View {
                      ? "Recording stops after \(Int(session.settings.duration)) seconds. You can also stop earlier with a shortcut."
                      : "Stop when you're done using your shortcut. Recordings have a 60-second safety limit.")
                     .font(.callout).foregroundStyle(.secondary)
-                Text("Wait for Listening in the floating indicator before speaking. Shortcuts are ignored while the model is preparing or a transcript is processing.")
+                Text("Recording starts as soon as the microphone opens, even while the model warms up. Start and stop normally while it loads. Shortcuts are ignored while the microphone opens or a transcript is processing.")
                     .font(.callout).foregroundStyle(.secondary)
                 Label(session.settings.copyWhenFinished
                       ? (session.settings.pasteWhenFinished

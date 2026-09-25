@@ -30,16 +30,20 @@ public final class WhisperKitEngine: TranscriptionEngine {
     public static let defaultModel = "openai_whisper-large-v3-v20240930_626MB"
     // Baseline is deliberately batch-only. Measure before adding speculative decoding.
     public let capabilities = EngineCapabilities(incrementalProcessing: false, requiresNetwork: false)
-    private let modelFolder: String
-    private var pipeline: WhisperKit?
+    private let runtime: WhisperRuntime
+    private var prepared = false
     private var buffer = AudioSessionBuffer()
     private var language: String?
     private var inference: Task<String, Error>?
     private var inferenceSession: UUID?
 
-    public init(modelFolder: String) { self.modelFolder = modelFolder }
+    public init(modelFolder: String) { runtime = WhisperRuntime(modelFolder: modelFolder) }
 
-    public static func download(model: String, to directory: URL) async throws -> URL {
+    public nonisolated static func availableModels() async throws -> [String] {
+        try await WhisperKit.fetchAvailableModels()
+    }
+
+    public nonisolated static func download(model: String, to directory: URL) async throws -> URL {
         let folder = try await WhisperKit.download(variant: model, downloadBase: directory)
         // WhisperKit's model download does not include tokenizer assets. Fetch them
         // during this explicitly online setup command, and bundle them with the model.
@@ -59,23 +63,18 @@ public final class WhisperKitEngine: TranscriptionEngine {
     }
 
     public func prepare() async throws {
-        guard pipeline == nil else { return }
+        guard !prepared else { return }
         do {
-            // The SDK otherwise falls back to a network tokenizer fetch even with
-            // download:false. Reject missing/corrupt tokenizer assets before entering it.
-            _ = try await AutoTokenizerWrapper.from(modelFolder: URL(fileURLWithPath: modelFolder))
-            pipeline = try await WhisperKit(WhisperKitConfig(
-                modelFolder: modelFolder,
-                tokenizerFolder: URL(fileURLWithPath: modelFolder),
-                verbose: false, logLevel: .error, prewarm: true, load: true, download: false
-            ))
+            try await runtime.prepare()
+            try Task.checkCancellation()
+            prepared = true
         } catch {
             throw EngineError.modelUnavailable(error.localizedDescription)
         }
     }
 
     public func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {
-        guard pipeline != nil else { throw EngineError.notPrepared }
+        guard prepared else { throw EngineError.notPrepared }
         // Do not reuse the underlying pipeline until cancelled inference has unwound.
         guard inference == nil else { throw EngineError.invalidState }
         try buffer.start(sessionID)
@@ -87,14 +86,10 @@ public final class WhisperKitEngine: TranscriptionEngine {
     }
 
     public func finish(sessionID: UUID) async throws -> String {
-        guard let pipeline else { throw EngineError.notPrepared }
+        guard prepared else { throw EngineError.notPrepared }
         let audio = try buffer.beginFinish(sessionID)
-        let options = DecodingOptions(language: language, detectLanguage: language == nil,
-                                      skipSpecialTokens: true, withoutTimestamps: true)
-        let work = Task { @MainActor in
-            let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)
-            try Task.checkCancellation()
-            return results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        let work = Task { [runtime, language] in
+            try await runtime.transcribe(audio, language: language)
         }
         inference = work
         inferenceSession = sessionID
@@ -118,5 +113,36 @@ public final class WhisperKitEngine: TranscriptionEngine {
     public func cancel(sessionID: UUID) async {
         buffer.cancel(sessionID)
         if inferenceSession == sessionID { inference?.cancel() }
+    }
+}
+
+/// Keep SDK initialization, tokenizer parsing and inference off the main actor
+/// so a cold load cannot block shortcuts, the recording timer or audio draining.
+private actor WhisperRuntime {
+    private let modelFolder: String
+    private var pipeline: WhisperKit?
+
+    init(modelFolder: String) { self.modelFolder = modelFolder }
+
+    func prepare() async throws {
+        guard pipeline == nil else { return }
+        // The SDK otherwise falls back to a network tokenizer fetch even with
+        // download:false. Reject missing/corrupt tokenizer assets first.
+        _ = try await AutoTokenizerWrapper.from(modelFolder: URL(fileURLWithPath: modelFolder))
+        try Task.checkCancellation()
+        pipeline = try await WhisperKit(WhisperKitConfig(
+            modelFolder: modelFolder,
+            tokenizerFolder: URL(fileURLWithPath: modelFolder),
+            verbose: false, logLevel: .error, prewarm: true, load: true, download: false
+        ))
+    }
+
+    func transcribe(_ audio: [Float], language: String?) async throws -> String {
+        guard let pipeline else { throw EngineError.notPrepared }
+        let options = DecodingOptions(language: language, detectLanguage: language == nil,
+                                      skipSpecialTokens: true, withoutTimestamps: true)
+        let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)
+        try Task.checkCancellation()
+        return results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

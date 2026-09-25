@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 public struct StudioView: View {
     @Bindable var session: StudioSession
     public enum Page: String, CaseIterable {
-        case history = "History", settings = "Settings", permissions = "Permissions", model = "Local model", about = "About Nami"
+        case history = "History", settings = "Settings", permissions = "Permissions", model = "Local model", about = "About Nami", debugging = "Internal debugging"
 
         var symbol: String {
             switch self {
@@ -15,12 +15,13 @@ public struct StudioView: View {
             case .permissions: "lock.shield"
             case .model: "cpu"
             case .about: "info.circle"
+            case .debugging: "ladybug"
             }
         }
 
         var settingsPage: StudioSettingsView.Page? {
             switch self {
-            case .history: nil
+            case .history, .debugging: nil
             case .settings: .general
             case .permissions: .permissions
             case .model: .model
@@ -47,7 +48,9 @@ public struct StudioView: View {
             VStack(spacing: 0) {
                 header
                 StudioStyle.divider
-                if let settingsPage = page.settingsPage {
+                if page == .debugging {
+                    InternalDebuggingView(session: session, lab: session.debugging)
+                } else if let settingsPage = page.settingsPage {
                     StudioSettingsView(session: session, page: settingsPage)
                         .id(settingsPage)
                 } else {
@@ -91,7 +94,8 @@ public struct StudioView: View {
             shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
         }
         .onExitCommand {
-            if page != .history { page = .history }
+            if page == .debugging && session.debugging.isBusy { session.debugging.cancel() }
+            else if page != .history { page = .history }
             else if searchVisible { query = ""; searchVisible = false }
             else { session.cancel() }
         }
@@ -146,6 +150,8 @@ public struct StudioView: View {
             navigationItem(.model)
             Spacer()
             navigationItem(.about)
+            StudioStyle.divider.padding(.horizontal, 14).padding(.vertical, 8)
+            navigationItem(.debugging)
         }
         .padding(.horizontal, 12).padding(.top, 64).padding(.bottom, 20)
         .frame(width: 184).frame(maxHeight: .infinity)
@@ -154,9 +160,10 @@ public struct StudioView: View {
 
     private func navigationItem(_ item: Page) -> some View {
         Button { page = item } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: item == .debugging ? 8 : 10) {
                 Image(systemName: item.symbol).font(.system(size: 16)).frame(width: 20)
-                Text(item.rawValue).font(.system(size: 14, weight: page == item ? .medium : .regular))
+                Text(item.rawValue).font(.system(size: item == .debugging ? 12 : 14, weight: page == item ? .medium : .regular))
+                    .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
             }
             .foregroundStyle(page == item ? StudioStyle.green : StudioStyle.quiet)
