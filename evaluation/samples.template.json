@@ -1,0 +1,218 @@
+[
+  {
+    "id": "en-01",
+    "audio": "audio/en-01.wav",
+    "reference": "Open the project settings and show me the current build configuration.",
+    "language": "en",
+    "category": "command",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-02",
+    "audio": "audio/en-02.wav",
+    "reference": "Search for the session controller and explain how cancellation works.",
+    "language": "en",
+    "category": "command",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-03",
+    "audio": "audio/en-03.wav",
+    "reference": "Please move our meeting to tomorrow afternoon at half past three.",
+    "language": "en",
+    "category": "command",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-04",
+    "audio": "audio/en-04.wav",
+    "reference": "Create a new branch for the microphone permission setup.",
+    "language": "en",
+    "category": "command",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-05",
+    "audio": "audio/en-05.wav",
+    "reference": "Nami should work in T3 Code, Google Chrome, and Slack.",
+    "language": "en",
+    "category": "names",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-06",
+    "audio": "audio/en-06.wav",
+    "reference": "Send Oleg a reminder to check the WhisperKit benchmark results.",
+    "language": "en",
+    "category": "names",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-07",
+    "audio": "audio/en-07.wav",
+    "reference": "The Swift protocol accepts timestamped audio chunks and returns a final transcript.",
+    "language": "en",
+    "category": "technical",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-08",
+    "audio": "audio/en-08.wav",
+    "reference": "Use AVAudioEngine for capture and Core ML for local inference.",
+    "language": "en",
+    "category": "technical",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-09",
+    "audio": "audio/en-09.wav",
+    "reference": "The API request returned a four hundred and twenty nine error.",
+    "language": "en",
+    "category": "technical",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-10",
+    "audio": "audio/en-10.wav",
+    "reference": "Check the JSON payload, the UUID, and the asynchronous callback.",
+    "language": "en",
+    "category": "technical",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-11",
+    "audio": "audio/en-11.wav",
+    "reference": "The median latency is one point two seconds and the memory usage is six hundred megabytes.",
+    "language": "en",
+    "category": "numbers",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-12",
+    "audio": "audio/en-12.wav",
+    "reference": "Version one point one point zero needs twenty four evaluation samples.",
+    "language": "en",
+    "category": "numbers",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-13",
+    "audio": "audio/en-13.wav",
+    "reference": "I want to keep the transcription model loaded between recordings because loading it every time would make short dictation sessions feel slow. Please measure the time from the end of recording to the final text.",
+    "language": "en",
+    "category": "long",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-14",
+    "audio": "audio/en-14.wav",
+    "reference": "Before we build the menu bar interface, we need to know whether the recognition quality is good enough for everyday messages. Compare quiet recordings with the same kinds of sentences recorded with ordinary background noise.",
+    "language": "en",
+    "category": "long",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-15",
+    "audio": "audio/en-15.wav",
+    "reference": "When I release the shortcut, insert the transcript into the field where I started speaking. If I have switched to another window while the model was working, keep the text available so I can copy it myself.",
+    "language": "en",
+    "category": "long",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-16",
+    "audio": "audio/en-16.wav",
+    "reference": "The first implementation should remain small. Recording, recognition, and text insertion should have separate interfaces so we can replace the model without rewriting the rest of the application.",
+    "language": "en",
+    "category": "long",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-17",
+    "audio": "audio/en-17.wav",
+    "reference": "Let me think about that for a moment. We should probably run the smaller model first.",
+    "language": "en",
+    "category": "pauses",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-18",
+    "audio": "audio/en-18.wav",
+    "reference": "The next task is to check permissions. After that, we can test the microphone.",
+    "language": "en",
+    "category": "pauses",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-19",
+    "audio": "audio/en-19.wav",
+    "reference": "Schedule it for Tuesday, sorry, Wednesday morning at ten.",
+    "language": "en",
+    "category": "corrections",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-20",
+    "audio": "audio/en-20.wav",
+    "reference": "Use the small model, no, use the large turbo model for the first comparison.",
+    "language": "en",
+    "category": "corrections",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-21",
+    "audio": "audio/en-21.wav",
+    "reference": "Hey, I have finished the first pass and will share the results after lunch.",
+    "language": "en",
+    "category": "conversational",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-22",
+    "audio": "audio/en-22.wav",
+    "reference": "That sounds good to me. Could you also check whether it works without an internet connection?",
+    "language": "en",
+    "category": "conversational",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-23",
+    "audio": "audio/en-23.wav",
+    "reference": "I am not sure we need that feature yet. Let us measure the basic workflow first.",
+    "language": "en",
+    "category": "conversational",
+    "condition": "quiet",
+    "referenceVerified": false
+  },
+  {
+    "id": "en-24",
+    "audio": "audio/en-24.wav",
+    "reference": "Thanks for checking. I will take another look when the build has finished.",
+    "language": "en",
+    "category": "conversational",
+    "condition": "everyday-noise",
+    "referenceVerified": false
+  }
+]

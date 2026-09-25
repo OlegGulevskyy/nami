@@ -1,0 +1,15 @@
+{
+  "engine" : "whisperkit",
+  "language" : "en",
+  "modelFolder" : "/Users/oleggulevskyy/Library/Application Support/Nami/Models/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB",
+  "studio" : {
+    "audioDirectory" : "/Users/oleggulevskyy/Documents/dev/nami/evaluation/audio",
+    "copyWhenFinished" : true,
+    "duration" : 60,
+    "engine" : "whisperkit",
+    "language" : "en",
+    "modelFolder" : "/Users/oleggulevskyy/Library/Application Support/Nami/Models/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB",
+    "saveAudio" : true,
+    "timed" : true
+  }
+}

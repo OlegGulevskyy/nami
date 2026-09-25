@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+.DS_Store
+evaluation/audio/
+evaluation/results/
+evaluation/samples.local.json
