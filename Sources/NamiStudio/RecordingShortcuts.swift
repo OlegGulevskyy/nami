@@ -72,7 +72,11 @@ public struct RecordingShortcutSettings: View {
                     .font(.callout).foregroundStyle(.secondary)
                 Text("Wait for Listening in the floating indicator before speaking. Shortcuts are ignored while the model is preparing or a transcript is processing.")
                     .font(.callout).foregroundStyle(.secondary)
-                Label(session.settings.copyWhenFinished ? "Finished transcripts are copied automatically." : "Automatic copying is off. Copy transcripts from your history.", systemImage: "doc.on.clipboard")
+                Label(session.settings.copyWhenFinished
+                      ? (session.settings.pasteWhenFinished
+                         ? "Recordings are copied and pasted into the focused app. Allow Accessibility in General settings."
+                         : "Finished transcripts are copied automatically.")
+                      : "Automatic copying and pasting are off. Copy transcripts from your history.", systemImage: "doc.on.clipboard")
                     .font(.callout)
             }
         }

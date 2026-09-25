@@ -15,31 +15,57 @@ Build and open the app from this directory:
 After building once, double-click `.build/Nami.app` in Finder, or run
 `open .build/Nami.app`. No CLI recording commands are needed.
 
-1. Open **Settings → General** to choose a duration (5–60 seconds), or select manual stopping to stop
+On every launch, Nami checks **Microphone** and **Input Monitoring** access. If either
+is missing, a popup blurs and blocks the history pane until both are allowed. The
+sidebar stays available, including Settings and Permissions. Use
+**Allow microphone** to trigger the macOS prompt before any model loads. If access
+was denied, **Open Settings…** takes you to the microphone privacy settings.
+**Allow Input Monitoring…** requests shortcut access and opens its privacy settings
+when needed. Enable Nami, then return to the app; it rechecks automatically, or you
+can click **Check again**. Follow any macOS prompt to quit and reopen the app. If a
+rebuilt app still shows missing access, switch its permission off and on and reopen
+Nami. Recording shortcuts and audio import cannot bypass this setup.
+
+The persistent sidebar contains **History**, **Settings**, **Permissions**, **Local
+model**, and **About Nami**. **Permissions** shows current Microphone, Input Monitoring,
+and Accessibility access. Use **Allow…** for missing access, or **Manage…** to open the
+corresponding macOS privacy pane and revoke or re-enable access. Status updates when
+you return to Nami. Revoking a required permission stops an active recording.
+
+1. Open **Settings** to choose a duration (5–60 seconds), or select manual stopping to stop
    manually. All recordings have a 60-second maximum.
-2. Leave English and the configured WhisperKit model selected. **Settings → Local model**
+2. Leave English and the configured WhisperKit model selected. **Local model**
    contains the model folder, engine, and optional evaluation reading prompts.
-3. Click **Start recording**, grant Nami microphone access when macOS asks,
-   and wait for **Listening** before speaking. Initial model preparation can
+3. Click **Start recording** and wait for **Listening** before speaking. Initial model preparation can
    take a few minutes; it stays loaded for subsequent runs in the same app.
 4. Watch the timer and live microphone levels. Click **Stop & transcribe**
    early if needed, or wait for the chosen duration. Escape cancels.
-5. The finished transcript is **copied to the clipboard automatically**. Paste it
-   anywhere with **⌘V**, **Listen** to the captured audio, or use **Copy** again.
+5. The finished transcript is **copied to the clipboard automatically**. When
+   recording with a shortcut from another app, Nami also **pastes at your cursor**
+   after you allow Accessibility. You can **Listen** to the captured audio or use **Copy** again.
    **Import audio** lets you transcribe an existing recording without a microphone.
    Transcripts are grouped by day. Click the search icon or press **⌘F** to search;
    hover a transcript for playback, or use its context menu. **⌘R** starts/stops recording.
 
-Choose a **Microphone** in **Settings → General** to remember that device across app restarts,
+Choose a **Microphone** in **Settings** to remember that device across app restarts,
 or choose **System default** to follow macOS. If a saved microphone is disconnected,
 Nami keeps the choice and asks you to reconnect it or choose another input.
 **Refresh microphones** updates the list after connecting a device.
 Recording settings save immediately and restore from `nami.json` under `studio`, with
-engine, language and model folder shared with the CLI. **Keep audio files** is
-off by default. Enable it to keep uniquely named WAV files in `evaluation/audio`
-or another chosen folder. The last 12 runs remain available in memory while the
-app is open; transcript history is not saved to disk. Imported files are left
-in their original location.
+engine, language and model folder shared with the CLI. All studio recordings and
+transcripts are saved automatically in `~/Library/Application Support/Nami/History`,
+independent of the project, app bundle, and build directory. History is restored
+on launch and has no count limit, expiration, or automatic cleanup. Each recording
+has a UUID-named WAV and a JSON file containing its text, timestamp, input, model,
+prompt, and recording statistics. Playback loads audio from disk on demand.
+Imported audio gets its own normalized WAV copy, so moving/deleting the original
+does not break history. Audio is saved when capture ends, before transcription;
+failed, cancelled, or interrupted transcriptions retain the captured audio with a
+status in history. Force-quitting during active capture can still lose that take.
+**Settings → Recording history → Show folder** opens the storage directory.
+**Save extra audio copies** optionally saves another microphone WAV in
+`evaluation/audio` or a chosen folder; turning it off never disables history.
+Previously discarded in-memory history cannot be recovered.
 
 **Option + Command taps are enabled by default.** Press and release both keys
 together **twice quickly** (within half a second) to start recording. While
@@ -52,13 +78,13 @@ A small floating capsule appears near the bottom of the display under your
 pointer, above the Dock, even while Nami is in the background or minimized.
 It shows **Getting ready…** during model preparation, live microphone waves and
 a timer while **Listening**, then a **Transcribing…** spinner until the final
-text is ready (and copied, if enabled). It never takes keyboard focus and
+text is ready (and copied/pasted, if enabled). It never takes keyboard focus and
 disappears after completion, failure, or cancellation. Keep Nami running to use
 the global shortcuts.
 
-Open **Nami → Settings… (⌘,)** or the settings icon, then click the pencil beside
-**Start / stop recording**. Settings opens inside the main window; use the back arrow
-or **Escape** to return to recording history. Click **Allow Input Monitoring…**, enable **Nami** in **System Settings →
+Open **Nami → Settings… (⌘,)** or **Settings** in the sidebar, then click the pencil
+beside **Start / stop recording**. Use **History** in the sidebar or **Escape** to
+return to recording history. Click **Allow Input Monitoring…**, enable **Nami** in **System Settings →
 Privacy & Security → Input Monitoring**, and reopen Nami if macOS requests it.
 The status changes to **Ready in any app while Nami is running** when the
 listener is active. The listener is passive: it does not consume input or read
@@ -75,44 +101,129 @@ still applies). Wait for **Listening** before speaking; shortcuts do nothing
 while preparing, transcribing, or cancelling. Conventional shortcuts trigger once on release. Escape cancels when Nami is focused. Cancelled, failed, and empty
 transcriptions leave the clipboard unchanged. Successful recordings and audio
 imports replace it with the final text when **Copy when finished** is enabled (the default).
-Disable it in General to copy individual transcripts manually. Nami does not paste into other apps.
-Menu bar dictation and automatic insertion are still upcoming.
+Disable it in Settings to copy individual transcripts manually; this also disables automatic pasting.
 
-For code changes, quit Nami and rerun `./Scripts/app.sh`; Swift builds
-incrementally, but this setup does not hot reload. Changing controls does not
-require a rebuild. The script creates a locally ad-hoc-signed app bundle with
-its own microphone usage description and remembers this project's location.
-Keep the project and `.build` directory in place: this development bundle uses
-SwiftPM's build-directory fallback to load the shortcut recorder's resources.
+**Automatic paste:** click **Allow Accessibility…** in Nami or **Settings**,
+then enable **Nami** in **System Settings → Privacy & Security → Accessibility**.
+This permission is optional: without it, recording and copying still work.
+Click the text field you want to dictate into, use the global shortcut to start
+and stop, and keep that field focused until transcription finishes. Nami sends
+**⌘V**, never Enter, so messages remain drafts for you to send. **Paste automatically**
+is enabled by default and can be turned off in Settings while retaining automatic copying.
 
-### Shortcuts stop working after a rebuild
+Nami remembers the foreground app and, when available, the focused Accessibility
+element at recording start. If the app or field differs at completion, Nami leaves
+the text on the clipboard for manual recovery. Editors that do not expose their
+focused element get a best-effort paste guarded by the foreground app only.
+If you hold shortcut modifiers when transcription finishes, paste is skipped.
+Recordings started with Nami in front, audio imports, and the manual Copy button
+only copy. The transcript stays on the clipboard after paste; Nami does not restore
+its previous contents. An app can reject the paste event, so history and Copy
+remain available. Live compatibility checks in T3 Code, Chrome, and Slack are pending.
+Menu bar dictation is still upcoming.
 
-The default local build is ad-hoc signed. Its code identity changes when the
-executable changes, so macOS can reject the previous Input Monitoring grant even
-when Nami still appears enabled in System Settings. Recording with the button
-can continue to work because microphone access is a separate permission.
+For code changes, quit Nami and rerun `./Scripts/app.sh`. Builds are incremental;
+this setup does not hot reload. `NAMI_BUILD_CONFIGURATION=debug ./Scripts/app.sh`
+uses the debug configuration for faster compilation (release remains the default
+for transcription performance). The script packages the app at `.build/Nami.app`
+and remembers this checkout for development settings. Resource bundles are
+self-contained and no longer depend on SwiftPM's build-directory fallback.
 
-If **Nami** is already enabled, switching it off and on can retain the old build's
-code requirement. Quit Nami, then clear only its stale Input Monitoring entry:
+### One-time Developer ID setup
+
+Use the **same Developer ID Application identity** for local and shared builds.
+A paid Apple developer account is required; an iOS distribution certificate does
+not sign macOS apps for distribution outside the Mac App Store.
+
+1. Open **Xcode → Settings → Accounts**, sign in, and select your paid team.
+2. Open **Manage Certificates → + → Developer ID Application**. Apple requires
+   the team's Account Holder to create this certificate. If you already have one
+   on another Mac, import its certificate **and private key** into this Mac's
+   login Keychain instead. A `.cer` file alone is insufficient without its key.
+3. Run `./Scripts/app.sh --check-signing`, then `./Scripts/app.sh`.
+   If Keychain asks, allow `codesign` to use the signing key.
+4. After switching from the old ad-hoc signature, grant Nami its microphone and
+   Input Monitoring permissions once for this new identity. Subsequent rebuilds
+   using that identity and bundle identifier should retain those grants.
+
+The script automatically selects a sole valid Developer ID Application identity
+and pins its SHA-1 fingerprint in Git-ignored `.signing-identity` after signing.
+If multiple identities exist, select one explicitly on the first build:
+
+```sh
+security find-identity -v -p codesigning
+NAMI_SIGNING_IDENTITY='Developer ID Application: Your Name (TEAMID)' ./Scripts/app.sh
+```
+
+Environment selection overrides the saved fingerprint. Missing, expired, and
+ambiguous identities fail before changing the existing app; the script never
+silently falls back to ad-hoc signing. Keep bundle ID `local.nami.studio` stable.
+Changing signing certificate type (Apple Development versus Developer ID) changes
+the designated requirement and can prompt again. Apple explains this in
+[TN3127: code-signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+
+`--no-open` builds without launching. `--package-only` repackages the last **Xcode**
+build without compiling or launching. A disposable build without a certificate
+is still possible with `--ad-hoc`, but changed executables can invalidate grants.
+All packaged builds enable hardened runtime with the audio-input entitlement.
+
+`Nami.xcodeproj` wraps the existing Swift packages for correct macOS resource
+packaging. The script manages signing after Xcode finishes building. If you use
+Xcode directly, select your team and the **same Developer ID Application**
+identity in Signing & Capabilities; use the script for routine builds at the
+stable `.build/Nami.app` path. Xcode-launched copies use Application Support for
+settings unless you pass `--project /path/to/nami` in the scheme's arguments.
+
+### Prepare an app to share
+
+Local iteration needs signing only. For distribution, Apple also requires
+[notarization](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+Set up its credentials **once in your own Terminal**, with the interactive prompts:
+
+```sh
+xcrun notarytool store-credentials nami-notary
+```
+
+Use your Apple ID, developer Team ID, and an app-specific password created at
+[account.apple.com](https://account.apple.com). Credentials stay in Keychain;
+do not put them in the repository or chat. An App Store Connect API key is also
+supported by `notarytool store-credentials --help`.
+
+Then build, sign, notarize, staple, and verify:
+
+```sh
+./Scripts/distribute.sh
+```
+
+This command uploads the packaged app to Apple's notary service. It creates
+`.build/distribution/Nami-macOS-arm64.zip` only after Apple accepts the submission,
+the notarization ticket is stapled, and signature/Gatekeeper checks pass. Send
+that ZIP yourself. Recipients can unzip it and move Nami to Applications.
+Notarization may take several minutes and is not part of routine local builds.
+For a signed app without submitting it yet, use `./Scripts/app.sh --distribution`.
+The distribution output is separate from your local development app.
+
+Current distribution supports **Apple Silicon and macOS 14+**. It excludes the
+checkout path, personal `nami.json`, audio, and model weights. Recipients' settings
+live in `~/Library/Application Support/Nami/nami.json`; each recipient must grant
+the requested macOS permissions and configure a local WhisperKit model folder.
+The app does not yet provide a first-run model download flow; signing does not
+remove that setup requirement.
+
+### Recover a stale permission from an older ad-hoc build
+
+If Nami still appears enabled but shortcuts do not work after the one-time switch
+to Developer ID, quit Nami and clear only its stale Input Monitoring entry:
 
 ```sh
 tccutil reset ListenEvent local.nami.studio
 open .build/Nami.app
 ```
 
-Click **Open Settings…** in Nami and grant Input Monitoring again. Choose
-**Quit & Reopen** if macOS requests it. If Nami does not appear, use **+** in
-**System Settings → Privacy & Security → Input Monitoring** to add this project's
-`.build/Nami.app`. Reopen the existing bundle without rebuilding during recovery;
-another changed executable will have another identity. This reset does not touch
-other apps or Nami's microphone permission.
-
-For development with an existing code-signing certificate, use the same identity
-for every build: `NAMI_SIGNING_IDENTITY='Your code-signing identity' ./Scripts/app.sh`.
-The identity must already be installed in Keychain; the script does not create
-certificates or change permissions. After switching from ad-hoc signing, grant
-Input Monitoring once more for the newly signed app. See Apple's
-[code-signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+Grant Input Monitoring again, and choose **Quit & Reopen** if macOS requests it.
+If Nami is missing from the list, use **+** in System Settings to add this
+project's `.build/Nami.app`. This reset does not touch other apps or Nami's
+microphone permission. Do not run it as a routine rebuild step.
 
 ## Build and test
 
@@ -127,7 +238,10 @@ swift build --product Nami
 .build/debug/Nami --snapshot .build/design-check --design-preview
 ```
 
-This renders the empty and populated history, settings pages, and compact layouts.
+This renders the empty and populated history, settings pages, compact layouts, and
+the permission popup (`permissions.png`), and permission management with granted and
+missing access (`permissions-page.png`, `permissions-missing.png`). Permission states are simulated in snapshot
+mode; it never requests macOS access or opens System Settings.
 Sample history is available only in debug snapshot mode; normal launches use real recordings.
 
 Requires Apple Silicon, macOS 14+, Xcode with Swift 6.2+, and network access to

@@ -5,23 +5,81 @@ import UniformTypeIdentifiers
 
 public struct StudioView: View {
     @Bindable var session: StudioSession
-    @Binding private var showingSettings: Bool
+    public enum Page: String, CaseIterable {
+        case history = "History", settings = "Settings", permissions = "Permissions", model = "Local model", about = "About Nami"
+
+        var symbol: String {
+            switch self {
+            case .history: "text.alignleft"
+            case .settings: "slider.horizontal.3"
+            case .permissions: "lock.shield"
+            case .model: "cpu"
+            case .about: "info.circle"
+            }
+        }
+
+        var settingsPage: StudioSettingsView.Page? {
+            switch self {
+            case .history: nil
+            case .settings: .general
+            case .permissions: .permissions
+            case .model: .model
+            case .about: .about
+            }
+        }
+    }
+
+    @Binding private var page: Page
     @State private var searchVisible = false
     @State private var query = ""
     @State private var shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
     @FocusState private var searchFocused: Bool
 
-    public init(session: StudioSession, showingSettings: Binding<Bool>) {
+    public init(session: StudioSession, page: Binding<Page>) {
         self.session = session
-        _showingSettings = showingSettings
+        _page = page
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            if showingSettings {
-                StudioSettingsView(session: session, onBack: { showingSettings = false })
-            } else {
-                recordingHistory
+        HStack(spacing: 0) {
+            sidebar
+            Rectangle().fill(StudioStyle.line).frame(width: 1)
+            VStack(spacing: 0) {
+                header
+                StudioStyle.divider
+                if let settingsPage = page.settingsPage {
+                    StudioSettingsView(session: session, page: settingsPage)
+                        .id(settingsPage)
+                } else {
+                    recordingHistory
+                        .disabled(session.permissions.needsSetup)
+                        .allowsHitTesting(!session.permissions.needsSetup)
+                        .accessibilityHidden(session.permissions.needsSetup)
+                        .blur(radius: session.permissions.needsSetup ? 7 : 0)
+                        .overlay {
+                            if session.permissions.needsSetup {
+                                ZStack {
+                                    StudioStyle.paper.opacity(0.4).contentShape(Rectangle()).onTapGesture {}
+                                    PermissionSetupView(permissions: session.permissions, recheck: recheckPermissions)
+                                }
+                            }
+                        }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .font(.system(size: 16)).foregroundStyle(StudioStyle.ink)
+        .background(StudioStyle.paper).tint(StudioStyle.green)
+        .frame(minWidth: 760, minHeight: 600).preferredColorScheme(.light)
+        .background(StudioWindowChrome()).ignoresSafeArea(.container, edges: .top)
+        .task {
+            recheckPermissions()
+            // Keep the gate current even when System Settings stays in front.
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                let neededSetup = session.permissions.needsSetup
+                session.refreshPermissions()
+                if neededSetup && !session.permissions.needsSetup { session.modifierShortcut.refresh() }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
@@ -29,81 +87,107 @@ public struct StudioView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             session.refreshInput()
-            session.modifierShortcut.refresh()
+            recheckPermissions()
             shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
         }
         .onExitCommand {
-            if showingSettings { showingSettings = false }
+            if page != .history { page = .history }
             else if searchVisible { query = ""; searchVisible = false }
             else { session.cancel() }
         }
     }
 
+    private func recheckPermissions() {
+        session.refreshPermissions()
+        session.modifierShortcut.refresh()
+    }
+
     private var recordingHistory: some View {
-        VStack(spacing: 0) {
-            header
-            StudioStyle.divider
-            VStack(alignment: .leading, spacing: 0) {
-                introduction.padding(.top, 38).padding(.bottom, 32)
-                if let error = session.errorMessage { errorBanner(error).padding(.bottom, 18) }
-                if let prompt = session.selectedPrompt {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("READING PROMPT · \(prompt.id.uppercased())")
-                            .font(.system(size: 11, weight: .medium)).foregroundStyle(StudioStyle.quiet)
-                        Text(prompt.reference).font(.system(size: 16)).textSelection(.enabled)
-                    }
-                    .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 12))
-                    .padding(.bottom, 20)
+        VStack(alignment: .leading, spacing: 0) {
+            if let error = session.errorMessage { errorBanner(error).padding(.bottom, 18) }
+            if let prompt = session.selectedPrompt {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("READING PROMPT · \(prompt.id.uppercased())")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(StudioStyle.quiet)
+                    Text(prompt.reference).font(.system(size: 16)).textSelection(.enabled)
                 }
-                history.frame(maxHeight: .infinity)
-                if session.modifierShortcut.enabled && !session.modifierShortcut.isListening {
-                    shortcutPermissionNotice.padding(.top, 16)
-                }
-                recordingBar.padding(.top, 22)
-                footer.padding(.top, 14).padding(.bottom, 24)
+                .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 20)
             }
-            .padding(.horizontal, 54)
+            history.frame(maxHeight: .infinity)
+            if session.modifierShortcut.enabled && !session.modifierShortcut.isListening {
+                shortcutPermissionNotice.padding(.top, 16)
+            }
+            if session.settings.copyWhenFinished && session.settings.pasteWhenFinished && !session.permissions.accessibility {
+                HStack(spacing: 10) {
+                    Text("Allow Accessibility to paste your recordings automatically.")
+                    Spacer(minLength: 8)
+                    Button("Allow Accessibility…", action: session.permissions.resolveAccessibility)
+                        .buttonStyle(.plain).underline().disabled(session.phase.busy)
+                }
+                .font(.system(size: 12)).foregroundStyle(StudioStyle.green).padding(.top, 16)
+            }
+                recordingBar.padding(.top, 16).padding(.bottom, 18)
         }
-        .font(.system(size: 16)).foregroundStyle(StudioStyle.ink)
-        .background(StudioStyle.paper).tint(StudioStyle.green)
-        .frame(minWidth: 760, minHeight: 600).preferredColorScheme(.light)
-        .background(StudioWindowChrome()).ignoresSafeArea(.container, edges: .top)
+        .padding(.top, 24)
+        .padding(.horizontal, 28)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("nami")
+                .font(.system(size: 20, weight: .semibold, design: .rounded)).tracking(-0.4)
+                .padding(.horizontal, 14).padding(.bottom, 26)
+            navigationItem(.history)
+            StudioStyle.divider.padding(.horizontal, 14).padding(.vertical, 12)
+            navigationItem(.settings)
+            navigationItem(.permissions)
+            navigationItem(.model)
+            Spacer()
+            navigationItem(.about)
+        }
+        .padding(.horizontal, 12).padding(.top, 64).padding(.bottom, 20)
+        .frame(width: 184).frame(maxHeight: .infinity)
+        .background(StudioStyle.sidebar)
+    }
+
+    private func navigationItem(_ item: Page) -> some View {
+        Button { page = item } label: {
+            HStack(spacing: 10) {
+                Image(systemName: item.symbol).font(.system(size: 16)).frame(width: 20)
+                Text(item.rawValue).font(.system(size: 14, weight: page == item ? .medium : .regular))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(page == item ? StudioStyle.green : StudioStyle.quiet)
+            .padding(.horizontal, 12).frame(height: 40)
+            .background(page == item ? StudioStyle.selection : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain).accessibilityAddTraits(page == item ? .isSelected : [])
     }
 
     private var header: some View {
         HStack(spacing: 20) {
-            Text("nami").font(.system(size: 25, weight: .semibold, design: .rounded)).tracking(-0.6)
+            Text(page.rawValue).font(.system(size: 17, weight: .semibold))
             Spacer()
-            HStack(spacing: 8) {
-                Circle().fill(StudioStyle.green.opacity(0.75)).frame(width: 6, height: 6)
-                Text(session.settings.engine == "fake" ? "Demo mode" : "On-device")
-                    .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
+            if page == .history {
+                HStack(spacing: 8) {
+                    Circle().fill(StudioStyle.green.opacity(0.75)).frame(width: 6, height: 6)
+                    Text(session.settings.engine == "fake" ? "Demo mode" : "On-device")
+                        .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
+                }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { searchVisible.toggle() }
+                    searchFocused = searchVisible
+                    if !searchVisible { query = "" }
+                } label: { Image(systemName: searchVisible ? "xmark" : "magnifyingglass") }
+                .buttonStyle(StudioIconButton()).keyboardShortcut("f", modifiers: .command)
+                .help(searchVisible ? "Close search" : "Search transcripts (⌘F)")
+                .accessibilityLabel(searchVisible ? "Close search" : "Search transcripts")
             }
-            Button { showingSettings = true } label: { Image(systemName: "slider.horizontal.3") }
-                .buttonStyle(StudioIconButton()).help("Settings (⌘,)").accessibilityLabel("Open settings")
         }
-        .padding(.leading, 118).padding(.trailing, 28).frame(height: 72)
-    }
-
-    private var introduction: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 9) {
-                Text("Your words, kept here.")
-                    .font(.system(size: 34, weight: .medium)).tracking(-0.6)
-                Text("A thought, a message, a little less typing.")
-                    .font(.system(size: 16)).foregroundStyle(StudioStyle.quiet)
-            }
-            Spacer(minLength: 20)
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) { searchVisible.toggle() }
-                searchFocused = searchVisible
-                if !searchVisible { query = "" }
-            } label: { Image(systemName: searchVisible ? "xmark" : "magnifyingglass") }
-            .buttonStyle(StudioIconButton()).keyboardShortcut("f", modifiers: .command)
-            .help(searchVisible ? "Close search" : "Search transcripts (⌘F)")
-            .accessibilityLabel(searchVisible ? "Close search" : "Search transcripts")
-        }
+        .padding(.horizontal, 28).frame(height: 64)
     }
 
     private var filteredRuns: [RecordingRun] {
@@ -180,7 +264,7 @@ public struct StudioView: View {
     }
 
     private var recordingBar: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Button(action: session.toggleRecording) {
                 ZStack {
                     Circle().fill(StudioStyle.green)
@@ -188,24 +272,20 @@ public struct StudioView: View {
                         ProgressView().controlSize(.small).tint(.white).colorScheme(.dark)
                     } else {
                         Image(systemName: session.phase == .recording ? "stop.fill" : "mic")
-                            .font(.system(size: 21, weight: .medium)).foregroundStyle(.white)
+                            .font(.system(size: 17, weight: .medium)).foregroundStyle(.white)
                     }
-                }.frame(width: 44, height: 44)
+                }.frame(width: 36, height: 36)
             }
             .buttonStyle(.plain).disabled(session.phase.busy && session.phase != .recording)
             .keyboardShortcut("r", modifiers: .command)
             .accessibilityLabel(session.phase == .recording ? "Stop and transcribe" : "Start recording")
             .help(session.phase == .recording ? "Stop and transcribe" : "Start recording (⌘R)")
-            VStack(alignment: .leading, spacing: 5) {
-                Text(recordingTitle).font(.system(size: 16, weight: .medium))
-                Text(recordingSubtitle).font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
+            Text(recordingTitle).font(.system(size: 14, weight: .medium))
             Spacer(minLength: 12)
             if session.phase == .recording {
                 waveform.frame(width: 80, height: 28)
                 Text(String(format: "%02d:%02d", Int(session.elapsed) / 60, Int(session.elapsed) % 60))
-                    .font(.system(size: 17, design: .monospaced)).monospacedDigit()
+                    .font(.system(size: 15, design: .monospaced)).monospacedDigit()
                     .accessibilityLabel("\(Int(session.elapsed)) seconds recorded")
             }
             if session.phase.busy {
@@ -213,7 +293,7 @@ public struct StudioView: View {
                     .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
                     .disabled(session.phase == .cancelling)
             } else {
-                Button { showingSettings = true } label: {
+                Button { page = .settings } label: {
                     HStack(spacing: 5) {
                         if session.modifierShortcut.enabled {
                             StudioKeycap(text: "⌥ ⌘")
@@ -222,40 +302,28 @@ public struct StudioView: View {
                     }
                 }.buttonStyle(.plain).help("Change recording shortcut").accessibilityLabel("Change recording shortcut")
             }
+            Button(action: importAudio) { Image(systemName: "doc.badge.plus") }
+                .buttonStyle(StudioIconButton()).disabled(session.phase.busy)
+                .keyboardShortcut("o", modifiers: .command)
+                .help("Import audio (⌘O)").accessibilityLabel("Import audio")
         }
-        .foregroundStyle(StudioStyle.green).padding(.horizontal, 21).padding(.vertical, 18)
-        .background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 15))
+        .foregroundStyle(StudioStyle.green).padding(.horizontal, 14).padding(.vertical, 10)
+        .background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var recordingTitle: String {
         switch session.phase {
         case .idle: "Ready when you are"
-        case .recording: "Listening to you"
+        case .recording: "Listening"
         case .preparing: "Getting ready"
         case .processing: "Finding your words"
         case .cancelling: "Cancelling recording"
         case .failed: "Let’s try that again"
         }
     }
-    private var recordingSubtitle: String {
-        switch session.phase {
-        case .idle, .failed:
-            session.runs.isEmpty ? "Press your shortcut or click to record" : session.status
-        case .recording: "Press your shortcut or click stop to finish"
-        default: session.status
-        }
-    }
     private var waveform: some View {
         StudioWaveform(levels: session.meterHistory)
             .accessibilityLabel("Microphone level \(Int(session.level * 100)) percent")
-    }
-    private var footer: some View {
-        HStack {
-            Label("Private by design. Transcribed on your Mac.", systemImage: "lock")
-            Spacer()
-            Button(action: importAudio) { Label("Import audio", systemImage: "doc") }
-                .buttonStyle(.plain).disabled(session.phase.busy).keyboardShortcut("o", modifiers: .command)
-        }.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
     }
     private func dayLabel(_ date: Date) -> String {
         if Calendar.current.isDateInToday(date) { return "TODAY" }
@@ -314,7 +382,7 @@ private struct RecordingHistoryRow: View {
                     .help(copied ? "Copied" : "Copy transcript")
                     .accessibilityLabel(copied ? "Transcript copied" : "Copy transcript")
             }.font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-            Text(run.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No speech recognized." : run.transcript)
+            Text(run.displayText)
                 .font(.system(size: 17)).lineSpacing(6).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)

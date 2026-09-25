@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "NamiCore", targets: ["NamiCore"]),
+        .library(name: "NamiStudio", targets: ["NamiStudio"]),
         .executable(name: "nami-bench", targets: ["NamiBench"]),
         .executable(name: "Nami", targets: ["NamiApp"]),
     ],

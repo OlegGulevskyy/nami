@@ -9,13 +9,14 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var timed = true
     public var saveAudio = false
     public var copyWhenFinished = true
+    public var pasteWhenFinished = true
     public var audioDirectory = ""
     /// nil follows the system default; a UID pins Nami to a specific microphone.
     public var microphoneUID: String?
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case engine, modelFolder, language, duration, timed, saveAudio, copyWhenFinished, audioDirectory, microphoneUID
+        case engine, modelFolder, language, duration, timed, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
     }
 
     public init(from decoder: Decoder) throws {
@@ -27,6 +28,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         timed = try values.decodeIfPresent(Bool.self, forKey: .timed) ?? true
         saveAudio = try values.decodeIfPresent(Bool.self, forKey: .saveAudio) ?? false
         copyWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .copyWhenFinished) ?? true
+        pasteWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .pasteWhenFinished) ?? true
         audioDirectory = try values.decodeIfPresent(String.self, forKey: .audioDirectory) ?? ""
         microphoneUID = try values.decodeIfPresent(String.self, forKey: .microphoneUID)
     }

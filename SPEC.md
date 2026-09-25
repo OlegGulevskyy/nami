@@ -19,8 +19,9 @@ provider does not require rewriting recording, UI, or text insertion.
 - Provide a native recording studio for configuring runs, seeing live input
   levels and recording/processing state, reading evaluation prompts, listening
   back and copying transcripts. This evaluation UI can precede backend selection;
-  it uses the same capture and engine contract as the CLI. Save audio only when
-  enabled explicitly, and retain recent runs in memory.
+  it uses the same capture and engine contract as the CLI. Persist all studio
+  recordings and transcripts locally across restarts and rebuilds, without
+  automatic cleanup. CLI audio export remains opt-in.
 - Use 20–30 representative utterances with manually checked reference text:
   short commands, longer thoughts, names, technical terms, pauses, corrections,
   and the languages actually used. Include quiet and everyday noisy conditions.
@@ -43,7 +44,7 @@ provider does not require rewriting recording, UI, or text insertion.
   to stop, with Input Monitoring setup; conventional key shortcuts remain an
   alternative. Hold-to-talk remains future work.
 - Fully local transcription after the initial model download. No account,
-  telemetry, or automatic cloud fallback; no saved audio by default.
+  telemetry, or automatic cloud fallback; studio history saved locally; CLI audio export is opt-in.
 - Paste the final text into the focused app using the clipboard and simulated
   paste, with microphone and Accessibility permission setup.
 - Preserve clipboard contents where feasible without overwriting newer user

@@ -36,7 +36,8 @@ Scope and architecture: [SPEC.md](SPEC.md).
     optional WAV saves, and in-memory run history. Settings persist in
     `nami.json`. Configurable global toggle/start/stop shortcuts are implemented;
     shortcut assignments persist in macOS app preferences. Successful nonempty
-    transcripts copy automatically. Automatic insertion remains outstanding.
+    transcripts copy automatically. Recordings also attempt automatic paste with
+    Accessibility permission and a check of the focused target.
 - [ ] **5. Complete dictation:** paste, clipboard preservation, focus checks,
   cancellation, failure handling, and last-transcript recovery.
 - [ ] **6. Validate POC:** trials in three target apps, quality/latency gates,
@@ -66,6 +67,16 @@ Fill after running the experiment; do not infer measurements.
 
 ## Implementation evidence
 
+- Automatic paste, 2026-09-25: recordings capture the foreground app and focused
+  Accessibility element, then send ⌘V after successfully copying a nonempty final
+  transcript. Changed focus, missing permission, held modifiers, cancellation,
+  failed transcription, and failed clipboard writes prevent paste. Imports and
+  manual Copy remain copy-only. Settings expose automatic paste and optional
+  Accessibility setup. Apps without AX focus use an app-only guard. Clipboard
+  preservation and live trials in T3 Code, Chrome, and Slack remain outstanding;
+  the transcript intentionally remains on the clipboard for recovery. All 56
+  tests pass; the Developer ID signed release app was rebuilt and the General
+  settings and compact recording-history layouts were rendered and inspected.
 - Modifier-only recording gesture, 2026-09-25: added dedicated ⌥⌘ double-tap
   start / single-tap stop handling, enabled by default. The conventional
   recorder listens for keyDown events and cannot capture modifier-only input;

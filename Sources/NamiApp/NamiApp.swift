@@ -7,7 +7,7 @@ struct NamiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var session: StudioSession
     @State private var recordingIndicator: RecordingIndicatorController?
-    @State private var showingSettings = false
+    @State private var page: StudioView.Page = .history
 
     init() {
         let args = CommandLine.arguments
@@ -19,10 +19,25 @@ struct NamiApp: App {
                   let values = try? JSONDecoder().decode([String: String].self, from: data),
                   let path = values["project"] {
             project = URL(fileURLWithPath: path, isDirectory: true)
+        } else if Bundle.main.bundleURL.pathExtension == "app" {
+            // Distributed apps must never depend on the developer's checkout or
+            // Finder's working directory. Keep writable settings outside the app.
+            project = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Nami", isDirectory: true)
         }
         var clipboardWriter: (@MainActor (String) -> Bool)?
         if args.contains("--snapshot") { clipboardWriter = { _ in true } }
-        let session = StudioSession(project: project, clipboardWriter: clipboardWriter)
+        let previewPermissions = args.contains("--snapshot")
+            ? StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
+                                accessibilityStatus: { false }, requestAccessibility: { false },
+                                requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
+            : nil
+        // Screenshot fixtures must never enter the user's permanent history.
+        let previewHistory = args.contains("--snapshot")
+            ? FileManager.default.temporaryDirectory.appendingPathComponent("nami-preview-" + UUID().uuidString)
+            : nil
+        let session = StudioSession(project: project, historyDirectory: previewHistory,
+                                    permissions: previewPermissions, clipboardWriter: clipboardWriter)
         _session = State(initialValue: session)
         // Visual checks must not register shortcuts or change the user's clipboard.
         if !args.contains("--snapshot") {
@@ -33,7 +48,7 @@ struct NamiApp: App {
 
     var body: some Scene {
         Window("Nami · Recording history", id: "studio") {
-            StudioView(session: session, showingSettings: $showingSettings)
+            StudioView(session: session, page: $page)
                 .onDisappear { session.cancel(); session.stopPlayback() }
                 .task { await runVisualCheckIfRequested() }
         }
@@ -43,7 +58,7 @@ struct NamiApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { showingSettings = true }
+                Button("Settings…") { page = .settings }
                     .keyboardShortcut(",", modifiers: .command)
             }
         }
@@ -59,6 +74,13 @@ struct NamiApp: App {
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
             try await Task.sleep(for: .milliseconds(300))
             try render(to: output.appendingPathComponent("idle.png"))
+            let permissionSession = StudioSession(project: session.project, historyDirectory: session.historyDirectory,
+                permissions: StudioPermissions(microphoneStatus: { .notDetermined }, inputMonitoringStatus: { false },
+                    accessibilityStatus: { false }, requestAccessibility: { false },
+                    requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
+                clipboardWriter: { _ in true })
+            try renderView(AnyView(StudioView(session: permissionSession, page: .constant(.history))),
+                           size: NSSize(width: 760, height: 600), to: output.appendingPathComponent("permissions.png"))
             try render(to: output.appendingPathComponent("shortcuts.png"), shortcuts: true)
             for phase in [StudioPhase.preparing, .recording, .processing] {
                 let levels = (0..<20).map { 0.15 + abs(sin(Double($0) * 0.65)) * 0.75 }
@@ -68,6 +90,11 @@ struct NamiApp: App {
             }
             try render(to: output.appendingPathComponent("local-model.png"), settingsPage: .model)
             try render(to: output.appendingPathComponent("about.png"), settingsPage: .about)
+            try render(to: output.appendingPathComponent("permissions-page.png"), settingsPage: .permissions)
+            try render(to: output.appendingPathComponent("permissions-compact.png"), settingsPage: .permissions,
+                       size: NSSize(width: 760, height: 600))
+            try renderView(AnyView(StudioView(session: permissionSession, page: .constant(.permissions))),
+                           size: NSSize(width: 760, height: 600), to: output.appendingPathComponent("permissions-missing.png"))
             if let frame = NSApplication.shared.windows.first(where: { $0.title.contains("Recording history") })?.contentView?.superview {
                 try cacheView(frame, to: output.appendingPathComponent("window.png"))
             }
@@ -104,9 +131,14 @@ struct NamiApp: App {
     @MainActor private func render(to url: URL, shortcuts: Bool = false, settingsPage: StudioSettingsView.Page? = nil, size requestedSize: NSSize? = nil) throws {
         let isSettings = shortcuts || settingsPage != nil
         let size = requestedSize ?? (isSettings ? NSSize(width: 880, height: 830) : NSSize(width: 1080, height: 850))
-        let content = isSettings
-            ? AnyView(StudioSettingsView(session: session, page: settingsPage ?? .general, onBack: {}))
-            : AnyView(StudioView(session: session, showingSettings: .constant(false)))
+        let selectedPage: StudioView.Page = switch settingsPage {
+        case .general: .settings
+        case .permissions: .permissions
+        case .model: .model
+        case .about: .about
+        case nil: shortcuts ? .settings : .history
+        }
+        let content = AnyView(StudioView(session: session, page: .constant(selectedPage)))
         try renderView(content, size: size, to: url)
     }
 
