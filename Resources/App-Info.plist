@@ -6,8 +6,8 @@
     <key>CFBundleDisplayName</key><string>Nami</string>
     <key>CFBundleExecutable</key><string>Nami</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleVersion</key><string>1</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>10</string>
+    <key>CFBundleShortVersionString</key><string>1.0.2</string>
     <key>SUFeedURL</key><string>$(NAMI_UPDATE_FEED_URL)</string>
     <key>SUPublicEDKey</key><string>$(NAMI_UPDATE_PUBLIC_KEY)</string>
     <key>SUEnableAutomaticChecks</key><true/>
