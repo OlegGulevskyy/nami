@@ -8,7 +8,6 @@ let package = Package(
         .library(name: "NamiCore", targets: ["NamiCore"]),
         .library(name: "NamiStudio", targets: ["NamiStudio"]),
         .executable(name: "nami-bench", targets: ["NamiBench"]),
-        .executable(name: "nami-lab", targets: ["NamiLab"]),
         .executable(name: "Nami", targets: ["NamiApp"]),
     ],
     dependencies: [
@@ -29,7 +28,6 @@ let package = Package(
         ]),
         .executableTarget(name: "NamiBench", dependencies: ["NamiCore", "NamiAudio", "NamiWhisperKit"],
             linkerSettings: [.unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "Resources/Info.plist"])]),
-        .executableTarget(name: "NamiLab", dependencies: ["NamiStudio"]),
         .executableTarget(name: "NamiApp", dependencies: ["NamiStudio"]),
         .testTarget(name: "NamiCoreTests", dependencies: ["NamiCore", "NamiAudio"]),
         .testTarget(name: "NamiStudioTests", dependencies: ["NamiStudio"]),
