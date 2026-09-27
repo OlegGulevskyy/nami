@@ -300,7 +300,7 @@ public struct StudioSettingsView: View {
             Text("Nami turns short recordings into text with a local speech model. No account, no cloud transcription. Just your voice and your Mac.")
                 .font(.system(size: 15)).lineSpacing(6).foregroundStyle(StudioStyle.quiet)
             StudioStyle.divider.padding(.vertical, 8)
-            Label("Version 0.1 · Proof of concept", systemImage: "leaf")
+            Label("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0")", systemImage: "leaf")
             Text("All recordings and transcripts are saved on this Mac and restored when you reopen Nami. Imported audio is copied into history. There is no automatic deletion or history limit.")
                 .font(.system(size: 13)).lineSpacing(5).foregroundStyle(StudioStyle.quiet)
             Text("Finished text can be copied automatically. Pasting into another app is manual for now.")
