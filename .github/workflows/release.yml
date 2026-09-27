@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: nami-${{ github.event_name == 'pull_request' && github.ref || 'releases' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
