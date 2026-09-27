@@ -75,6 +75,11 @@ resources.mkdir(parents=True, exist_ok=True)
 (resources / 'workspace.json').write_text(json.dumps({'project': sys.argv[1]}))
 PYTHON
 fi
+NAMI_UPDATE_ARGUMENTS=(--stamp)
+if (( NAMI_DISTRIBUTION )); then
+  NAMI_UPDATE_ARGUMENTS+=(--require-updates)
+fi
+python3 Scripts/update_config.py "$NAMI_STAGED_APP" "${NAMI_UPDATE_ARGUMENTS[@]}"
 nami_sign_app "$NAMI_STAGED_APP"
 
 # Leave the last working app intact if compilation or signing fails.

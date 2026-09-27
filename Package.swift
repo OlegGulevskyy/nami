@@ -11,6 +11,7 @@ let package = Package(
         .executable(name: "Nami", targets: ["NamiApp"]),
     ],
     dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.0"),
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.1.0"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", exact: "3.1.0"),
     ],
@@ -19,6 +20,7 @@ let package = Package(
         .target(name: "NamiAudio", dependencies: ["NamiCore"]),
         .target(name: "NamiStudio", dependencies: [
             "NamiCore", "NamiAudio", "NamiWhisperKit",
+            .product(name: "Sparkle", package: "Sparkle"),
             .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
         ]),
         .target(name: "NamiWhisperKit", dependencies: [

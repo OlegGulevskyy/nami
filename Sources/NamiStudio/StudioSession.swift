@@ -52,6 +52,8 @@ public struct RecordingRun: Identifiable, Codable, Sendable {
 
 @MainActor @Observable
 public final class StudioSession {
+    public var updates: AppUpdates?
+    public var busyForUpdate: Bool { phase.busy || debugging.isBusy }
     public let permissions: StudioPermissions
     public let modifierShortcut = ModifierRecordingShortcut()
     public var settings: StudioSettings {

@@ -1,0 +1,5 @@
+// Public configuration only. Never put the private Sparkle key here.
+// Sparkle private key: Keychain account local.nami.studio.
+// In xcconfig URLs, use https:/$()/host/path to avoid starting a // comment.
+NAMI_UPDATE_FEED_URL = https:/$()/raw.githubusercontent.com/OlegGulevskyy/nami/updates/appcast.xml
+NAMI_UPDATE_PUBLIC_KEY = hBtYO3AejdRJUDn1rKoGD6F5wzrspINOS6/gPtmi2ok=

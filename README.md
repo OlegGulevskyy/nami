@@ -234,6 +234,14 @@ settings unless you pass `--project /path/to/nami` in the scheme's arguments.
 
 ### Prepare an app to share
 
+Nami includes Sparkle updates: **Nami → Check for Updates…** and update controls
+in **Settings** and **About Nami**. The update feed uses the public
+`OlegGulevskyy/nami` GitHub releases repository. After the one-time Actions secret
+setup, publish a `vX.Y.Z` release on GitHub to build and distribute it automatically.
+Release notes are optional. See [Updates and releases](docs/updates.md).
+Unconfigured local builds show that updates are unavailable, and distribution
+builds fail rather than ship a broken updater.
+
 Local iteration needs signing only. For distribution, Apple also requires
 [notarization](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
 Set up its credentials **once in your own Terminal**, with the interactive prompts:

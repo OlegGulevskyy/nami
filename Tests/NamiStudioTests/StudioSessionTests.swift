@@ -52,7 +52,10 @@ import NamiAudio
     var receivedSamples: [Float] = []
     func prepare() async throws {
         prepares += 1
-        try await Task.sleep(for: prepareDelay)
+        // The uncooperative fake must also ignore cancellation during its first
+        // suspension, before the release gate (which CI can reach later).
+        if ignorePrepareCancellation { try? await Task.sleep(for: prepareDelay) }
+        else { try await Task.sleep(for: prepareDelay) }
         while !releasePrepare {
             if ignorePrepareCancellation {
                 // Complete even after invalidation, like an uncooperative SDK load.
