@@ -16,35 +16,37 @@ Open **Internal debugging** at the very bottom of the sidebar. This is a separat
 local test workspace; it never automatically copies or pastes test results and
 does not change your normal dictation model.
 
-1. Choose **Record**, **Import**, or **From History…**. Recordings
-   stop at 60 seconds. Imports and history selections get their own audio copy.
-2. Give the sample a title and enter its **Expected text**: the words you
-   actually said, including hesitations and corrections. Edits save immediately.
-3. Expand **Models**, then use **Add model** to select the dictation model,
-   choose a local folder, or download from Hugging Face.
-   Browsing and downloading explicitly contact Hugging Face; downloaded models
-   and comparisons are local afterward. Downloads and initial preparation can
-   take several minutes. Removing a candidate keeps its files and prior results.
-4. Select models and click **Compare**, or **Compare all** for all saved samples.
-   Each model processes the same audio. Results appear beside your expectation
-   with transcript, word error rate (WER), and transcription time. The info
-   button shows the run date, model-load time, language, and saved reference.
+1. Choose **Upload audio** or **History**. History includes saved test recordings
+   and normal recording history. Audio is copied into the test workspace; samples
+   can be up to 60 seconds long.
+2. Open **Settings** to choose a local WhisperKit model and enter your ElevenLabs
+   API key. Both settings save automatically across restarts; the key is stored
+   in macOS Keychain, separate from workspace files and reports. **Add model** can use the
+   dictation model, a local folder, or download from Hugging Face.
+3. Click **Compare**, then confirm the ElevenLabs upload and provider charge.
+   The selected local model and ElevenLabs Scribe v2 transcribe the same audio.
+4. Read **Local** and **ElevenLabs** side by side. **Highlight differences** marks
+   words present in only one transcript, including replacements, while preserving
+   the original text. Case and punctuation differences are ignored. Use Play to
+   listen and judge which transcript is better.
 
-WER ignores case/punctuation and is not a human quality judgment. It can exceed
-100%; missing expectations remain unscored. Each result saves its own expectation
-and language snapshot; a badge marks results made before you edited those fields.
-Timing is one pass per model/sample, with preparation shown separately, not a
-formal warm p95 benchmark or stop-to-paste measurement. Reruns retain older results.
-Failed models show their errors while the rest continue. Cancel rejects late
-results and retains already saved samples/results. Normal dictation cannot start
-while debugging is capturing or running a comparison.
+The page shows one comparison at a time, with transcription time beside each
+provider. Results from different runs are never paired; a failed provider shows
+its error while the other continues. Cancel keeps completed results. Normal
+dictation cannot start while a comparison is running.
 
-Samples, expectations, candidate model paths, and results persist under
+Samples, model paths, and all previous results persist under
 `~/Library/Application Support/Nami/InternalDebugging`, independently of normal
-history and app rebuilds. Model downloads use its `Models` subfolder. There are
-no JSON files or terminal commands to manage in this workflow. This first page
-compares WhisperKit speech recognition; text-cleanup providers and learning are
-the next stage described in the spec.
+history and app rebuilds. Model downloads use its `Models` subfolder. The page
+keeps benchmark scores, reference editing, and word-by-word tables out of the
+comparison flow. Existing reference data is retained.
+
+The `nami-lab` CLI supports detailed benchmark reports, local runs, verified
+references, and explicitly approved cloud comparisons. Reports include audio
+hashes, run snapshots, paired differences, category summaries, and failures.
+See the [agent benchmark workflow](docs/transcription-benchmarks.md) for commands,
+normalization limits, and the improvement protocol. Text cleanup and learning
+remain the next stage described in the spec.
 
 ## Open the recording studio
 
@@ -97,7 +99,19 @@ or choose **System default** to follow macOS. If a saved microphone is disconnec
 Nami keeps the choice and asks you to reconnect it or choose another input.
 **Refresh microphones** updates the list after connecting a device.
 Recording settings save immediately and restore from `nami.json` under `studio`, with
-engine, language and model folder shared with the CLI. All studio recordings and
+engine, language and model folder shared with the CLI.
+
+Add names and technical terms in **Settings → Vocabulary**, separated by commas or
+new lines. Changes save immediately in `studio.vocabulary` and survive app restarts
+and Mac reboots. Packaged development builds use the project's `nami.json`;
+distributed builds use `~/Library/Application Support/Nami/nami.json`.
+Vocabulary stays on-device and applies to the next normal recording or audio import
+without reloading the model. Keep the list short: WhisperKit limits its prompt
+context and retains the end of long lists. These are recognition hints, not guaranteed
+spellings or cleanup instructions. Clear the field to disable hints. Internal
+debugging comparisons and CLI benchmarks keep their unprompted baseline.
+
+All studio recordings and
 transcripts are saved automatically in `~/Library/Application Support/Nami/History`,
 independent of the project, app bundle, and build directory. History is restored
 on launch and has no count limit, expiration, or automatic cleanup. Each recording
@@ -233,6 +247,14 @@ stable `.build/Nami.app` path. Xcode-launched copies use Application Support for
 settings unless you pass `--project /path/to/nami` in the scheme's arguments.
 
 ### Prepare an app to share
+
+Nami includes Sparkle updates: **Nami → Check for Updates…** and update controls
+in **Settings** and **About Nami**. The update feed uses the public
+`OlegGulevskyy/nami` GitHub releases repository. After the one-time Actions secret
+setup, publish a `vX.Y.Z` release on GitHub to build and distribute it automatically.
+Release notes are optional. See [Updates and releases](docs/updates.md).
+Unconfigured local builds show that updates are unavailable, and distribution
+builds fail rather than ship a broken updater.
 
 Local iteration needs signing only. For distribution, Apple also requires
 [notarization](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).

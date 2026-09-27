@@ -34,6 +34,7 @@ public final class WhisperKitEngine: TranscriptionEngine {
     private var prepared = false
     private var buffer = AudioSessionBuffer()
     private var language: String?
+    private var vocabulary = ""
     private var inference: Task<String, Error>?
     private var inferenceSession: UUID?
 
@@ -73,12 +74,13 @@ public final class WhisperKitEngine: TranscriptionEngine {
         }
     }
 
-    public func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {
+    public func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
         guard prepared else { throw EngineError.notPrepared }
         // Do not reuse the underlying pipeline until cancelled inference has unwound.
         guard inference == nil else { throw EngineError.invalidState }
         try buffer.start(sessionID)
         self.language = language
+        self.vocabulary = vocabulary
     }
 
     public func append(_ chunk: NamiCore.AudioChunk, sessionID: UUID) async throws {
@@ -88,8 +90,8 @@ public final class WhisperKitEngine: TranscriptionEngine {
     public func finish(sessionID: UUID) async throws -> String {
         guard prepared else { throw EngineError.notPrepared }
         let audio = try buffer.beginFinish(sessionID)
-        let work = Task { [runtime, language] in
-            try await runtime.transcribe(audio, language: language)
+        let work = Task { [runtime, language, vocabulary] in
+            try await runtime.transcribe(audio, language: language, vocabulary: vocabulary)
         }
         inference = work
         inferenceSession = sessionID
@@ -137,10 +139,21 @@ private actor WhisperRuntime {
         ))
     }
 
-    func transcribe(_ audio: [Float], language: String?) async throws -> String {
+    func transcribe(_ audio: [Float], language: String?, vocabulary: String) async throws -> String {
         guard let pipeline else { throw EngineError.notPrepared }
-        let options = DecodingOptions(language: language, detectLanguage: language == nil,
+        var options = DecodingOptions(language: language, detectLanguage: language == nil,
                                       skipSpecialTokens: true, withoutTimestamps: true)
+        let prompt = vocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !prompt.isEmpty {
+            guard let tokenizer = pipeline.tokenizer else { throw EngineError.notPrepared }
+            let tokens = tokenizer.encode(text: " " + prompt)
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            if !tokens.isEmpty {
+                // WhisperKit bounds the conditioning context, retaining its final tokens.
+                options.promptTokens = tokens
+                options.usePrefillPrompt = true
+            }
+        }
         let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)
         try Task.checkCancellation()
         return results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,0 +1,85 @@
+name: Build and release Nami
+
+on:
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published stable release tag to retry (v1.2.3)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nami-${{ github.event_name == 'pull_request' && github.ref || 'releases' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    if: github.event_name != 'release' || (!github.event.release.prerelease && !github.event.release.draft)
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      NAMI_RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Validate release and derive version
+        if: github.event_name != 'pull_request'
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/github_release.py metadata
+
+      - name: Test
+        if: steps.release.outputs.already_published != 'true'
+        run: |
+          python3 -m unittest discover -s Scripts -p 'test_*.py'
+          swift test
+          python3 Scripts/smoke.py
+
+      - name: Build
+        if: steps.release.outputs.already_published != 'true'
+        run: ./Scripts/app.sh --ad-hoc --no-open
+
+      - name: Import signing credentials
+        if: github.event_name != 'pull_request' && steps.release.outputs.already_published != 'true'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash Scripts/ci-signing.sh
+
+      - name: Sign and notarize
+        if: github.event_name != 'pull_request' && steps.release.outputs.already_published != 'true'
+        run: ./Scripts/distribute.sh --package-only
+
+      - name: Generate signed update
+        if: github.event_name != 'pull_request' && steps.release.outputs.already_published != 'true'
+        run: ./Scripts/prepare-update.sh
+
+      - name: Upload release assets and promote update feed
+        if: github.event_name != 'pull_request' && steps.release.outputs.already_published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 Scripts/github_release.py publish
+
+      - name: Clean up signing credentials
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          security default-keychain -d user -s "$HOME/Library/Keychains/login.keychain-db"
+          security delete-keychain "$RUNNER_TEMP/nami-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/nami-certificate.p12" "$RUNNER_TEMP/nami-sparkle.key"

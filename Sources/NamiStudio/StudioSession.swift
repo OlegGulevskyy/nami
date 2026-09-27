@@ -52,6 +52,8 @@ public struct RecordingRun: Identifiable, Codable, Sendable {
 
 @MainActor @Observable
 public final class StudioSession {
+    public var updates: AppUpdates?
+    public var busyForUpdate: Bool { phase.busy || debugging.isBusy }
     public let permissions: StudioPermissions
     public let modifierShortcut = ModifierRecordingShortcut()
     public var settings: StudioSettings {
@@ -113,8 +115,11 @@ public final class StudioSession {
                 clipboardWriter: (@MainActor (String) -> Bool)? = nil) {
         self.project = project
         self.historyStore = RecordingHistoryStore(directory: historyDirectory ?? RecordingHistoryStore.defaultDirectory)
-        self.debugging = DebuggingSession(directory: historyDirectory?.appendingPathComponent("InternalDebugging")
-            ?? RecordingHistoryStore.defaultDirectory.deletingLastPathComponent().appendingPathComponent("InternalDebugging"))
+        let debuggingDirectory = historyDirectory?.appendingPathComponent("InternalDebugging")
+            ?? RecordingHistoryStore.defaultDirectory.deletingLastPathComponent().appendingPathComponent("InternalDebugging")
+        self.debugging = DebuggingSession(directory: debuggingDirectory,
+            apiKeyStore: CommandLine.arguments.contains("--snapshot") ? nil
+                : .keychain(account: debuggingDirectory.standardizedFileURL.path))
         self.permissions = permissions ?? StudioPermissions()
         self.pastePreparer = pastePreparer ?? { TranscriptPaster().prepare() }
         self.engineBuilder = engineBuilder ?? { settings in
@@ -303,7 +308,8 @@ public final class StudioSession {
                 self.refreshPermissions()
                 try self.check(id)
                 self.status = "Turning your audio into text…"
-                try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language, onPartial: nil)
+                try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language,
+                                       vocabulary: options.vocabulary, onPartial: nil)
                 for offset in stride(from: 0, to: samples.count, by: 1600) {
                     try self.check(id)
                     try await engine.append(AudioChunk(samples: Array(samples[offset..<min(samples.count, offset + 1600)]),
@@ -338,7 +344,8 @@ public final class StudioSession {
                                  input: url.lastPathComponent, options: options, prompt: "", outcome: .interrupted)
                 let engine = try await self.preparedEngine(options)
                 try self.check(id)
-                try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language, onPartial: nil)
+                try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language,
+                                       vocabulary: options.vocabulary, onPartial: nil)
                 for offset in stride(from: 0, to: samples.count, by: 1600) {
                     try self.check(id)
                     try await engine.append(AudioChunk(samples: Array(samples[offset..<min(samples.count, offset + 1600)]), timestamp: Double(offset) / AudioChunk.sampleRate), sessionID: id)

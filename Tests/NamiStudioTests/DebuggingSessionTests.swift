@@ -90,7 +90,7 @@ private func debugDirectory() -> URL {
     var started = false
     var cancelled = false
     func prepare() async throws {}
-    func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {}
+    func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {}
     func append(_ chunk: AudioChunk, sessionID: UUID) async throws {}
     func finish(sessionID: UUID) async throws -> String {
         started = true

@@ -5,6 +5,8 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var engine = "whisperkit"
     public var modelFolder = ""
     public var language = "en"
+    public var vocabulary = ""
+    public var transcriptFont: TranscriptFont = .sourceSans
     public var duration = 15.0
     public var timed = true
     public var saveAudio = false
@@ -16,7 +18,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case engine, modelFolder, language, duration, timed, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
+        case engine, modelFolder, language, vocabulary, transcriptFont, duration, timed, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
     }
 
     public init(from decoder: Decoder) throws {
@@ -24,6 +26,9 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         engine = try values.decodeIfPresent(String.self, forKey: .engine) ?? "whisperkit"
         modelFolder = try values.decodeIfPresent(String.self, forKey: .modelFolder) ?? ""
         language = try values.decodeIfPresent(String.self, forKey: .language) ?? "en"
+        vocabulary = try values.decodeIfPresent(String.self, forKey: .vocabulary) ?? ""
+        transcriptFont = (try values.decodeIfPresent(String.self, forKey: .transcriptFont))
+            .flatMap(TranscriptFont.init(rawValue:)) ?? .sourceSans
         duration = try values.decodeIfPresent(Double.self, forKey: .duration) ?? 15
         timed = try values.decodeIfPresent(Bool.self, forKey: .timed) ?? true
         saveAudio = try values.decodeIfPresent(Bool.self, forKey: .saveAudio) ?? false

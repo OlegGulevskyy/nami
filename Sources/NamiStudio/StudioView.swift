@@ -10,7 +10,7 @@ public struct StudioView: View {
 
         var symbol: String {
             switch self {
-            case .history: "text.alignleft"
+            case .history: "clock.arrow.circlepath"
             case .settings: "slider.horizontal.3"
             case .permissions: "lock.shield"
             case .model: "cpu"
@@ -222,16 +222,10 @@ public struct StudioView: View {
             if filteredRuns.isEmpty {
                 emptyHistory.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(groupedRuns, id: \.date) { group in
-                            Text(dayLabel(group.date)).font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(StudioStyle.quiet)
-                                .padding(.top, 5).padding(.bottom, 13)
-                            ForEach(group.runs) { run in RecordingHistoryRow(session: session, run: run) }
-                        }
-                    }
-                }.scrollIndicators(.automatic)
+                RecordingHistoryTimeline(groups: groupedRuns) { run in
+                    RecordingHistoryRow(session: session, run: run)
+                }
+                .id(query)
             }
         }
     }
@@ -332,11 +326,6 @@ public struct StudioView: View {
         StudioWaveform(levels: session.meterHistory)
             .accessibilityLabel("Microphone level \(Int(session.level * 100)) percent")
     }
-    private func dayLabel(_ date: Date) -> String {
-        if Calendar.current.isDateInToday(date) { return "TODAY" }
-        if Calendar.current.isDateInYesterday(date) { return "YESTERDAY" }
-        return date.formatted(.dateTime.month(.wide).day().year()).uppercased()
-    }
     private func errorBanner(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.circle")
@@ -390,7 +379,9 @@ private struct RecordingHistoryRow: View {
                     .accessibilityLabel(copied ? "Transcript copied" : "Copy transcript")
             }.font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
             Text(run.displayText)
-                .font(.system(size: 17)).lineSpacing(6).textSelection(.enabled)
+                .font(run.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                      ? .system(size: 17) : session.settings.transcriptFont.font)
+                .lineSpacing(6).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
             StudioStyle.divider

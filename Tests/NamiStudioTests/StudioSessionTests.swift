@@ -50,9 +50,13 @@ import NamiAudio
     var fail = false
     var sampleCount = 0
     var receivedSamples: [Float] = []
+    var receivedVocabularies: [String] = []
     func prepare() async throws {
         prepares += 1
-        try await Task.sleep(for: prepareDelay)
+        // The uncooperative fake must also ignore cancellation during its first
+        // suspension, before the release gate (which CI can reach later).
+        if ignorePrepareCancellation { try? await Task.sleep(for: prepareDelay) }
+        else { try await Task.sleep(for: prepareDelay) }
         while !releasePrepare {
             if ignorePrepareCancellation {
                 // Complete even after invalidation, like an uncooperative SDK load.
@@ -62,8 +66,9 @@ import NamiAudio
         if prepareFailure { throw EngineError.modelUnavailable("Test preparation failure") }
         prepared = true
     }
-    func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {
+    func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
         #expect(prepared)
+        receivedVocabularies.append(vocabulary)
         sampleCount = 0; receivedSamples = []
     }
     func append(_ chunk: AudioChunk, sessionID: UUID) async throws {
@@ -253,6 +258,7 @@ private func projectDirectory() throws -> URL {
     try Data(#"{"engine":"fake","language":"en","modelFolder":"~/My model","otherSetting":42}"#.utf8).write(to: config)
     var settings = try StudioSettings.load(project: project)
     #expect(settings.modelFolder == FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("My model").path)
+    #expect(settings.vocabulary.isEmpty)
     settings.duration = 25
     try settings.save(project: project)
     #expect(try StudioSettings.load(project: project).duration == 25)
@@ -283,6 +289,7 @@ private func projectDirectory() throws -> URL {
     session.settings.saveAudio = true
     session.settings.audioDirectory = project.appendingPathComponent("recordings").path
     session.settings.microphoneUID = "usb-mic-uid"
+    session.settings.vocabulary = "Nami, Oleg\nPostHog, Élodie, Київ"
 
     // No SwiftUI view or explicit save call: even quitting immediately must work.
     let reopened = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, inputDevicesProvider: { microphones })
@@ -292,9 +299,49 @@ private func projectDirectory() throws -> URL {
     #expect(reopened.errorMessage == nil)
 
     reopened.settings.microphoneUID = nil
+    reopened.settings.vocabulary = ""
     let followingDefault = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, inputDevicesProvider: { microphones })
     #expect(followingDefault.settings.microphoneUID == nil)
     #expect(followingDefault.settings.language == "fr")
+    #expect(followingDefault.settings.vocabulary.isEmpty)
+}
+
+@Test @MainActor func vocabularyAppliesPerRecordingAndImportWithoutReloadingModel() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { _ in Issue.record("Test must not copy"); return false })
+    session.settings.engine = "fake"
+    session.settings.copyWhenFinished = false
+    session.settings.vocabulary = "Nami, Oleg"
+    session.prepareForRecording()
+    try await waitUntil { session.modelLoaded }
+
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    // Changes made after capture starts belong to the following transcription.
+    session.settings.vocabulary = "PostHog, TypeScript"
+    capture.emit(seconds: 1)
+    try await waitUntil { session.capturedSeconds == 1 }
+    session.stopRecording()
+    try await waitUntil { !session.phase.busy }
+    #expect(session.phase == .idle)
+    #expect(engine.receivedVocabularies == ["Nami, Oleg"])
+
+    let audio = project.appendingPathComponent("sample.wav")
+    try AudioFile.write(Array(repeating: 0.1, count: 1600), to: audio)
+    session.transcribeFile(audio)
+    try await waitUntil { !session.phase.busy }
+    #expect(session.phase == .idle)
+    #expect(engine.receivedVocabularies == ["Nami, Oleg", "PostHog, TypeScript"])
+
+    session.settings.vocabulary = ""
+    session.transcribeFile(audio)
+    try await waitUntil { !session.phase.busy }
+    #expect(session.phase == .idle)
+    #expect(engine.receivedVocabularies == ["Nami, Oleg", "PostHog, TypeScript", ""])
+    #expect(engine.prepares == 1)
 }
 
 @Test func legacySettingsWithoutMicrophoneStillRestore() throws {
@@ -303,6 +350,7 @@ private func projectDirectory() throws -> URL {
         .write(to: project.appendingPathComponent("nami.json"))
     let restored = try StudioSettings.load(project: project)
     #expect(restored.microphoneUID == nil)
+    #expect(restored.vocabulary.isEmpty)
     #expect(restored.engine == "fake")
     #expect(restored.language == "fr")
     #expect(restored.duration == 40)

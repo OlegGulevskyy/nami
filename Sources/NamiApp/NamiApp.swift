@@ -39,6 +39,9 @@ struct NamiApp: App {
         let session = StudioSession(project: project, historyDirectory: previewHistory,
                                     permissions: previewPermissions, clipboardWriter: clipboardWriter)
         _session = State(initialValue: session)
+        session.updates = AppUpdates(disabled: args.contains("--snapshot"), isBusy: { [weak session] in
+            session?.busyForUpdate ?? false
+        })
         // Visual checks must not register shortcuts or change the user's clipboard.
         if !args.contains("--snapshot") {
             _recordingIndicator = State(initialValue: RecordingIndicatorController(session: session))
@@ -57,6 +60,10 @@ struct NamiApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { session.updates?.checkForUpdates() }
+                    .disabled(session.updates?.canCheckForUpdates != true || session.busyForUpdate)
+            }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { page = .settings }
@@ -112,6 +119,10 @@ struct NamiApp: App {
                 try render(to: output.appendingPathComponent("history.png"))
                 try render(to: output.appendingPathComponent("history-compact.png"), size: NSSize(width: 760, height: 600))
                 try render(to: output.appendingPathComponent("settings-compact.png"), shortcuts: true, size: NSSize(width: 800, height: 720))
+                try render(to: output.appendingPathComponent("settings-wide.png"), settingsPage: .general,
+                           size: NSSize(width: 1440, height: 1000))
+                try render(to: output.appendingPathComponent("settings-full.png"), settingsPage: .general,
+                           size: NSSize(width: 1080, height: 1600))
             }
             #endif
             if let fileIndex = args.firstIndex(of: "--audio"), args.indices.contains(fileIndex + 1) {

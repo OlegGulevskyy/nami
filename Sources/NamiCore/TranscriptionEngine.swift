@@ -47,10 +47,17 @@ public enum EngineError: Error, Equatable, Sendable, LocalizedError {
 public protocol TranscriptionEngine: AnyObject {
     var capabilities: EngineCapabilities { get }
     func prepare() async throws
-    func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws
+    /// Vocabulary provides optional recognition hints, snapshotted for this session.
+    func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws
     func append(_ chunk: AudioChunk, sessionID: UUID) async throws
     func finish(sessionID: UUID) async throws -> String
     func cancel(sessionID: UUID) async
+}
+
+public extension TranscriptionEngine {
+    func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {
+        try await start(sessionID: sessionID, language: language, vocabulary: "", onPartial: onPartial)
+    }
 }
 
 /// Shared lifecycle validation for batch adapters; guards against duplicate final results
@@ -114,7 +121,7 @@ public final class FakeTranscriptionEngine: TranscriptionEngine {
         self.delay = delay
     }
     public func prepare() async throws { prepared = true }
-    public func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {
+    public func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
         guard prepared else { throw EngineError.notPrepared }
         try buffer.start(sessionID)
     }
