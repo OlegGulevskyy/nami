@@ -170,6 +170,7 @@ public struct StudioSettingsView: View {
                 Text(loginError).font(.system(size: 12)).foregroundStyle(.red).padding(.top, 10)
             }
         }
+        updateSettings
     }
 
     @ViewBuilder private var permissions: some View {
@@ -305,6 +306,28 @@ public struct StudioSettingsView: View {
             Text("Finished text can be copied automatically. Pasting into another app is manual for now.")
                 .font(.system(size: 13)).lineSpacing(5).foregroundStyle(StudioStyle.quiet)
         }.padding(.top, 20)
+        updateSettings
+    }
+
+    @ViewBuilder private var updateSettings: some View {
+        section("UPDATES") {
+            if let updates = session.updates {
+                row("Check automatically", subtitle: "Check daily. You choose when to download and install.") {
+                    Toggle("Check automatically", isOn: Binding(
+                        get: { updates.automaticallyChecks }, set: { updates.setAutomaticallyChecks($0) }
+                    )).labelsHidden().toggleStyle(StudioToggleStyle()).disabled(!updates.available)
+                }
+                row("Software updates", subtitle: updates.status ?? (session.busyForUpdate
+                    ? "Available after the current task finishes." : "Keep Nami up to date.")) {
+                    Button("Check for Updates…", action: updates.checkForUpdates)
+                        .buttonStyle(.plain).preferenceControl()
+                        .disabled(!updates.canCheckForUpdates || session.busyForUpdate)
+                }
+            } else {
+                Text("Updates are unavailable in this preview.")
+                    .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
+            }
+        }
     }
 
     private var languages: [(code: String, name: String)] {

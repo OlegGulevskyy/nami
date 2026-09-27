@@ -39,6 +39,9 @@ struct NamiApp: App {
         let session = StudioSession(project: project, historyDirectory: previewHistory,
                                     permissions: previewPermissions, clipboardWriter: clipboardWriter)
         _session = State(initialValue: session)
+        session.updates = AppUpdates(disabled: args.contains("--snapshot"), isBusy: { [weak session] in
+            session?.busyForUpdate ?? false
+        })
         // Visual checks must not register shortcuts or change the user's clipboard.
         if !args.contains("--snapshot") {
             _recordingIndicator = State(initialValue: RecordingIndicatorController(session: session))
@@ -57,6 +60,10 @@ struct NamiApp: App {
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { session.updates?.checkForUpdates() }
+                    .disabled(session.updates?.canCheckForUpdates != true || session.busyForUpdate)
+            }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { page = .settings }

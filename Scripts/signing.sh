@@ -34,19 +34,22 @@ print("Signing as " + matches[0][1], file=sys.stderr)
 
 nami_sign_app() {
   local app_dir="$1"
+  local entitlements="$NAMI_PROJECT_DIR/Resources/Nami.entitlements"
   local -a signing_options
   signing_options=(--force --sign "$NAMI_SIGNING_IDENTITY" --options runtime)
   if [[ "$NAMI_SIGNING_IDENTITY" == "-" ]]; then
     signing_options+=(--timestamp=none)
+    entitlements="$NAMI_PROJECT_DIR/Resources/Nami-development.entitlements"
   else
     signing_options+=(--timestamp)
   fi
   # Sign embedded code from the inside out. Do not use --deep to sign.
-  # Current dependencies link statically; this also covers embedded Swift dylibs.
+  # Sparkle contains a bare Autoupdate tool, XPC services, and Updater.app.
+  # Its executable and nested bundles must be signed before the framework.
   local nested
   while IFS= read -r -d '' nested; do
     codesign "${signing_options[@]}" "$nested"
-  done < <(find "$app_dir/Contents" -depth \( -name '*.dylib' -o -name '*.framework' -o -name '*.bundle' -o -name '*.xpc' \) -print0)
-  codesign "${signing_options[@]}" --entitlements "$NAMI_PROJECT_DIR/Resources/Nami.entitlements" "$app_dir"
+  done < <(find "$app_dir/Contents" -depth \( -name 'Autoupdate' -o -name '*.app' -o -name '*.dylib' -o -name '*.framework' -o -name '*.bundle' -o -name '*.xpc' \) ! -type l -print0)
+  codesign "${signing_options[@]}" --entitlements "$entitlements" "$app_dir"
   codesign --verify --deep --strict --verbose=2 "$app_dir"
 }

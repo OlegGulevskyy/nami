@@ -8,6 +8,14 @@
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>SUFeedURL</key><string>$(NAMI_UPDATE_FEED_URL)</string>
+    <key>SUPublicEDKey</key><string>$(NAMI_UPDATE_PUBLIC_KEY)</string>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUAutomaticallyUpdate</key><false/>
+    <key>SUAllowsAutomaticUpdates</key><false/>
+    <key>SUEnableSystemProfiling</key><false/>
+    <key>SUVerifyUpdateBeforeExtraction</key><true/>
+    <key>SURequireSignedFeed</key><true/>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Nami records your voice for local transcription when you start a run. Audio is saved only when you enable Save recordings.</string>
