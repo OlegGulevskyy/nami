@@ -41,8 +41,9 @@ GitHub requires the owner's explicit confirmation before export/upload.
 The existing public Sparkle key remains in `Resources/Updates.xcconfig`.
 Do not generate a replacement private key: existing apps trust the current one.
 
-The runner imports credentials into a temporary keychain and removes it in an
-`always()` cleanup step. No private keys or certificates are uploaded as build
+The runner imports Apple credentials into a temporary keychain and reads the
+Sparkle key from a private temporary file to avoid interactive Keychain prompts.
+Both are removed in an `always()` cleanup step. No keys or certificates are uploaded as build
 artifacts. The workflow's token is scoped to the repository; no PAT is required.
 
 ## Stable feed and failure handling

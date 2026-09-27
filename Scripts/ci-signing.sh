@@ -33,3 +33,4 @@ xcrun notarytool store-credentials nami-notary --keychain "$NAMI_CI_KEYCHAIN" \
   --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" >/dev/null
 rm -f "$RUNNER_TEMP/nami-certificate.p12"
 echo "NAMI_SPARKLE_KEY_FILE=$RUNNER_TEMP/nami-sparkle.key" >> "$GITHUB_ENV"
+echo "NAMI_NOTARY_KEYCHAIN=$NAMI_CI_KEYCHAIN" >> "$GITHUB_ENV"
