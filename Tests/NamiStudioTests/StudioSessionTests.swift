@@ -51,6 +51,7 @@ import NamiAudio
     var sampleCount = 0
     var receivedSamples: [Float] = []
     var receivedVocabularies: [String] = []
+    var receivedLanguages: [String?] = []
     func prepare() async throws {
         prepares += 1
         // The uncooperative fake must also ignore cancellation during its first
@@ -69,6 +70,7 @@ import NamiAudio
     func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
         #expect(prepared)
         receivedVocabularies.append(vocabulary)
+        receivedLanguages.append(language)
         sampleCount = 0; receivedSamples = []
     }
     func append(_ chunk: AudioChunk, sessionID: UUID) async throws {
@@ -172,6 +174,199 @@ private func projectDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("nami-studio-test-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+@MainActor private final class TestCleanupProcessor: TextProcessor {
+    nonisolated let identifier: String
+    let output: String
+    var requests: [CleanupRequest] = []
+    var blocked = false
+    var unavailable = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    init(_ output: String = "The whole thought from beginning to end.", identifier: String = "apple-test") {
+        self.output = output; self.identifier = identifier
+    }
+    func prepare() async throws {}
+    func process(_ request: CleanupRequest) async throws -> String {
+        requests.append(request)
+        if unavailable { throw CleanupFailure.unavailable("Unavailable for this test") }
+        if blocked { await withCheckedContinuation { continuation = $0 } }
+        return output // Intentionally ignores cancellation, like a slow provider SDK.
+    }
+    func release() { blocked = false; continuation?.resume(); continuation = nil }
+}
+
+@Test @MainActor func liveCleanupPublishesOnceAndPreservesOriginalInHistory() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
+    processor.blocked = true
+    defer { processor.release() }
+    var copies: [String] = [], pastes = 0
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { pastes += 1; return .sent } },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        clipboardWriter: { copies.append($0); return true })
+    session.debugging.cleanupLab.addVocabulary(heard: "name me", replacement: "Nami")
+    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEnabled = true
+    session.settings.cleanupTimeoutSeconds = 5
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds >= 0.1 }
+    session.stopRecording()
+    try await waitUntil { !processor.requests.isEmpty }
+    #expect(session.isCleaningUp && session.phase == .processing)
+    #expect(copies.isEmpty && pastes == 0)
+    #expect(processor.requests.first?.memory.vocabulary.first?.replacement == "Nami")
+    // The original survives interruption before model generation completes.
+    let pending = try RecordingHistoryStore(directory: session.historyDirectory).load().runs.first
+    #expect(pending?.transcript == engine.transcript)
+    #expect(pending?.rawTranscript == engine.transcript)
+    processor.release()
+    try await waitUntil { !session.phase.busy }
+    #expect(copies == [processor.output] && pastes == 1)
+    #expect(!session.isCleaningUp)
+    let run = try #require(session.runs.first)
+    #expect(run.transcript == processor.output)
+    #expect(run.rawTranscript == engine.transcript)
+    #expect(run.cleanupResult?.outcome == .cleaned)
+    #expect(run.cleanupResult?.provider == processor.identifier)
+    #expect(try RecordingHistoryStore(directory: session.historyDirectory).load().runs.first?.rawTranscript == engine.transcript)
+    let settings = try StudioSettings.load(project: project)
+    #expect(settings.cleanupEnabled && settings.cleanupEngine == .apple && settings.cleanupTimeoutSeconds == 5)
+    #expect(session.copyOriginalTranscript(run))
+    #expect(copies == [processor.output, engine.transcript] && pastes == 1)
+}
+
+@Test @MainActor func liveCleanupDisabledByDefaultAndLegacyHistoryStillLoads() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
+    var copies: [String] = []
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        clipboardWriter: { copies.append($0); return true })
+    #expect(!session.settings.cleanupEnabled)
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds >= 0.1 }
+    session.stopRecording()
+    try await waitUntil { !session.phase.busy }
+    #expect(processor.requests.isEmpty && copies == [engine.transcript])
+    let run = try #require(session.runs.first)
+    var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(run)) as? [String: Any])
+    legacy.removeValue(forKey: "rawTranscript"); legacy.removeValue(forKey: "cleanupResult")
+    let restored = try JSONDecoder().decode(RecordingRun.self, from: JSONSerialization.data(withJSONObject: legacy))
+    #expect(restored.transcript == engine.transcript && restored.cleanupResult == nil && restored.rawTranscript == nil)
+}
+
+@Test @MainActor func liveCleanupInvalidJSONAndTimeoutPasteOriginalOnlyOnce() async throws {
+    for timedOut in [false, true] {
+        let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+        let engine = TestEngine(), capture = TestCapture()
+        let processor = TestCleanupProcessor(#"{"before":"Dictation","after":"Edited"}"#)
+        processor.blocked = timedOut
+        defer { processor.release() }
+        var copies: [String] = [], pastes = 0
+        let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+            permissions: allowedPermissions(), pastePreparer: { { pastes += 1; return .sent } },
+            engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+            clipboardWriter: { copies.append($0); return true })
+        session.settings.cleanupEngine = .apple
+        session.settings.cleanupTimeoutSeconds = 0.1
+        session.settings.cleanupEnabled = true
+        session.startRecording()
+        try await waitUntil { session.phase == .recording }
+        capture.emit(seconds: 0.1)
+        try await waitUntil { session.capturedSeconds >= 0.1 }
+        session.stopRecording()
+        try await waitUntil { !session.phase.busy }
+        #expect(copies == [engine.transcript] && pastes == 1)
+        #expect(session.runs.first?.cleanupResult?.outcome == (timedOut ? .timedOut : .invalidOutput))
+        processor.release()
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(copies == [engine.transcript] && pastes == 1)
+    }
+}
+
+@Test @MainActor func cancellingLiveCleanupKeepsRawHistoryAndNeverPastesLateOutput() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
+    processor.blocked = true
+    defer { processor.release() }
+    var copies: [String] = [], pastes = 0
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { pastes += 1; return .sent } },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        clipboardWriter: { copies.append($0); return true })
+    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEnabled = true
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds >= 0.1 }
+    session.stopRecording()
+    try await waitUntil { !processor.requests.isEmpty }
+    session.cancel()
+    try await waitUntil { !session.phase.busy }
+    #expect(copies.isEmpty && pastes == 0)
+    #expect(session.runs.first?.outcome == .cancelled)
+    #expect(session.runs.first?.rawTranscript == engine.transcript)
+    processor.release()
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(copies.isEmpty && pastes == 0 && session.runs.count == 1)
+}
+
+@Test @MainActor func liveCleanupRechecksPasteTargetAndImportsNeverPaste() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
+    processor.blocked = true
+    defer { processor.release() }
+    var targetChanged = false, preparations = 0, pasted = 0
+    var copies: [String] = []
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: {
+            preparations += 1
+            return { if targetChanged { return .targetChanged }; pasted += 1; return .sent }
+        }, engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        clipboardWriter: { copies.append($0); return true })
+    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEnabled = true
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds >= 0.1 }
+    session.stopRecording()
+    try await waitUntil { !processor.requests.isEmpty }
+    targetChanged = true
+    processor.release()
+    try await waitUntil { !session.phase.busy }
+    #expect(copies == [processor.output] && pasted == 0 && preparations == 1)
+    #expect(session.status == TranscriptPasteResult.targetChanged.status)
+    session.settings.cleanupUseMemory = false
+    let url = project.appendingPathComponent("import.wav")
+    try AudioFile.write(Array(repeating: 0.1, count: 1_600), to: url)
+    session.transcribeFile(url)
+    try await waitUntil { !session.phase.busy }
+    #expect(copies == [processor.output, processor.output] && pasted == 0 && preparations == 1)
+    #expect(processor.requests.last?.memory.examples.isEmpty == true)
+}
+
+@Test @MainActor func cleanupAutomaticFallsBackButExplicitSelectionIsRespected() async throws {
+    let apple = TestCleanupProcessor(), qwen = TestCleanupProcessor("Qwen result.", identifier: "qwen-test")
+    apple.unavailable = true
+    let service = CleanupService(processors: [.apple: apple, .qwen: qwen])
+    let request = CleanupRequest(rawText: "Original")
+    let automatic = try await service.run(request, engine: .automatic, timeout: 1)
+    #expect(automatic.provider == "qwen-test" && automatic.text == "Qwen result.")
+    let explicit = try await service.run(request, engine: .apple, timeout: 1)
+    #expect(explicit.outcome == .unavailable && explicit.text == "Original")
+    #expect(qwen.requests.count == 1)
+    qwen.unavailable = true
+    let noModels = try await service.run(request, engine: .automatic, timeout: 1)
+    #expect(noModels.provider == "vocabulary-v1" && noModels.text == "Original")
 }
 
 @MainActor private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
@@ -1099,4 +1294,101 @@ private func projectDirectory() throws -> URL {
     let reopened = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
     #expect(reopened.runs.map(\.id) == [kept.id])
     #expect(reopened.errorMessage == nil)
+}
+
+@MainActor private func seedRetranscriptionHistory(_ project: URL, outcome: RecordingOutcome = .completed,
+                                                 date: Date = Date(timeIntervalSince1970: 100)) throws -> RecordingRun {
+    let store = RecordingHistoryStore(directory: project.appendingPathComponent("history"))
+    return try store.save(RecordingRun(id: UUID(), date: date,
+        transcript: outcome == .completed ? "Original transcript." : "", audioSeconds: 0.2,
+        latency: 1, averageDB: -20, peakDB: -20, input: "Original microphone", savedURL: nil,
+        engine: "old-engine", model: "old-model", prompt: "Original reading prompt",
+        samples: Array(repeating: 0.1, count: 3200), outcome: outcome))
+}
+
+@Test(arguments: [RecordingOutcome.completed, .failed, .cancelled, .interrupted])
+@MainActor func retranscriptionUpdatesSameHistoryItemUsingCurrentSettings(outcome: RecordingOutcome) async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let original = try seedRetranscriptionHistory(project, outcome: outcome)
+    let newer = try seedRetranscriptionHistory(project, date: Date(timeIntervalSince1970: 200))
+    let audioURL = try #require(original.savedURL)
+    let audioBefore = try Data(contentsOf: audioURL)
+    let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
+    engine.releaseFinish = false
+    defer { engine.releaseFinish = true }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { Issue.record("Retry must not prepare a paste"); return { .sent } },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        clipboardWriter: { _ in Issue.record("Retry must not overwrite the clipboard"); return true })
+    session.settings.engine = "fake"
+    session.settings.modelFolder = "/models/current-model"
+    session.settings.vocabulary = "Nami, custom vocabulary"
+    session.settings.language = "fr"
+    session.settings.copyWhenFinished = true
+    session.settings.cleanupEnabled = true
+    session.settings.cleanupEngine = .apple
+    session.settings.cleanupTimeoutSeconds = 10
+    session.retranscribeRun(original.id)
+    #expect(session.retranscribingRunID == original.id)
+    try await waitUntil { engine.waitingForFinish }
+    session.retranscribeRun(original.id) // No concurrent retry or accidental deletion.
+    session.deleteRun(original.id)
+    #expect(session.runs.map(\.id) == [newer.id, original.id])
+    #expect(session.runs.last?.transcript == original.transcript)
+    #expect(engine.receivedVocabularies == ["Nami, custom vocabulary"])
+    #expect(engine.receivedLanguages == ["fr"])
+    #expect(engine.receivedSamples == (try AudioFile.read(audioURL)))
+    engine.releaseFinish = true
+    try await waitUntil { !session.phase.busy }
+    let updated = try #require(session.runs.last)
+    #expect(session.runs.map(\.id) == [newer.id, original.id])
+    #expect(updated.transcript == processor.output && updated.rawTranscript == engine.transcript)
+    #expect(updated.outcome == .completed && updated.cleanupResult?.succeeded == true)
+    #expect(updated.date == original.date && updated.input == original.input && updated.prompt == original.prompt)
+    #expect(updated.audioSeconds == original.audioSeconds && updated.averageDB == original.averageDB)
+    #expect(updated.model == "current-model" && updated.engine == "fake")
+    #expect(session.retranscribingRunID == nil && session.errorMessage == nil)
+    #expect(capture.starts == 0)
+    #expect(try Data(contentsOf: audioURL) == audioBefore)
+    let restored = try RecordingHistoryStore(directory: session.historyDirectory).load().runs
+    #expect(restored.map(\.id) == [newer.id, original.id])
+    #expect(restored.last?.transcript == processor.output && restored.last?.date == original.date)
+}
+
+@Test(arguments: ["failure", "cancel", "missing-audio", "cancel-cleanup"])
+@MainActor func retranscriptionKeepsOriginalWhenUnsuccessful(mode: String) async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let original = try seedRetranscriptionHistory(project)
+    let metadata = project.appendingPathComponent("history/\(original.id.uuidString).json")
+    let before = try Data(contentsOf: metadata)
+    let engine = TestEngine(), processor = TestCleanupProcessor()
+    engine.fail = mode == "failure"
+    engine.releaseFinish = mode != "cancel"
+    processor.blocked = mode == "cancel-cleanup"
+    defer { engine.releaseFinish = true; processor.release() }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in TestCapture() },
+        clipboardWriter: { _ in Issue.record("Retry must not copy"); return true })
+    session.settings.cleanupEnabled = mode == "cancel-cleanup"
+    session.settings.cleanupEngine = .apple
+    session.settings.cleanupTimeoutSeconds = 10
+    if mode == "missing-audio" { try FileManager.default.removeItem(at: #require(original.savedURL)) }
+    session.retranscribeRun(original.id)
+    if mode == "cancel" {
+        try await waitUntil { engine.waitingForFinish }
+        session.cancel()
+    } else if mode == "cancel-cleanup" {
+        try await waitUntil { !processor.requests.isEmpty }
+        #expect(try Data(contentsOf: metadata) == before)
+        session.cancel()
+    }
+    try await waitUntil { !session.phase.busy }
+    processor.release()
+    try await Task.sleep(for: .milliseconds(30))
+    #expect(session.retranscribingRunID == nil)
+    #expect(session.runs.count == 1 && session.runs.first?.transcript == original.transcript)
+    #expect(session.runs.first?.outcome == .completed)
+    #expect(try Data(contentsOf: metadata) == before)
+    if mode == "failure" || mode == "missing-audio" { #expect(session.errorMessage != nil) }
 }

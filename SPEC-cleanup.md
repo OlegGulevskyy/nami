@@ -1,7 +1,9 @@
 # Nami — transcript cleanup and personalization
 
-Status: proposed next-focus specification, 2026-09-25. Planning is complete;
-implementation, model selection, training, and performance validation are pending.
+Status: cleanup comparison page, Apple and both Qwen providers, model management, explicit memory, and
+opt-in live dictation integration implemented, 2026-09-28. Default-provider
+selection, automatic edit capture, training, and release-gate validation remain
+pending. See [experiment](evaluation/cleanup/README.md).
 Parent: [POC spec](SPEC.md). Execution: [plan](tasks/plan.md) and
 [task checklist](tasks/todo.md).
 
@@ -21,15 +23,22 @@ other apps is included in the first release.
 ## Current implementation
 
 - Swift/SwiftUI app with WhisperKit 1.1.0 and a local large-v3-turbo variant.
-- `StudioSession` receives final text from `TranscriptionEngine.finish`, saves
-  history, and copies/pastes it. There is no cleanup processor or learning capture.
+- `StudioSession` receives final text from `TranscriptionEngine.finish`, archives
+  the original, optionally runs cleanup under a deadline, saves the final result,
+  and copies/pastes it after cancellation and focus checks. **Internal debugging →
+  Cleanup** configures this opt-in path and compares vocabulary rules, Apple
+  Foundation Models, and Qwen3-0.6B / 1.7B (4-bit, MLX). The Models page manages
+  downloads, install status and deletion outside the app bundle. It persists explicitly taught
+  corrections and retrieves bounded examples. Automatic post-paste edit capture
+  remains future work.
 - **Internal debugging** now provides a separate persistent UI for recording,
   importing, and reusing samples; editing expected verbatim text; downloading or
   selecting WhisperKit models; and comparing ASR text, WER, and timing. Extend
   this workspace for cleanup evaluation rather than requiring JSON or CLI work.
   Its user-entered expectations are evaluation references, not automatic training
   consent. Cleanup targets and development/held-out labels remain to be added.
-- `RecordingRun` stores one transcript plus audio and metadata. The existing
+- `RecordingRun` stores final text plus optional raw transcript and cleanup result,
+  alongside audio and metadata; legacy history still decodes. The existing
   `prompt` field is an evaluation reading prompt, not an LLM instruction.
 - Capture starts independently of model preparation. This behavior must survive
   adding a second model; cleanup preparation cannot block microphone capture.
@@ -226,11 +235,34 @@ style preferences, and correction examples distinct. Define precedence: explicit
 current settings override learned examples; no preference may override fidelity.
 Keep speech-recognition corrections distinct from stylistic changes in the data.
 
-Nami currently cannot see edits made after pasting. Observation through macOS
-Accessibility is deferred to a separate opt-in feature limited to supported
-editors and the inserted passage. Do not log global keystrokes, inspect unrelated
-fields, or infer approval from silence or lack of edits. No cross-user learning,
-uploads, account, or synchronization is required.
+Nami currently cannot see edits made after pasting. The user's 2026-09-28 direction
+makes learning from these edits a required product milestone, following validation
+of the cleanup engine. It is not implemented by the initial experiment.
+
+Build this as an opt-in, supported-editor feature using macOS Accessibility:
+
+1. Establish that insertion succeeded and identify the actual inserted range in
+   the same target element. The current best-effort paste handoff is insufficient
+   evidence. Retain the inserted text and only the minimal anchors needed to track
+   that range; do not persist the surrounding document.
+2. Observe text-change notifications for that element while the passage can still
+   be identified. Debounce edits and collect a stable before/after candidate.
+   Discard ambiguous ranges, focus/navigation changes, message sends, deletion,
+   and edits that cannot reliably be attributed to this dictation.
+3. Store raw ASR, generated text, edited text, language, target-app scope,
+   processor/profile version and capture confidence separately. Distinguish a
+   factual update/new intent from a correction; automatic observations are
+   candidates, not verified ground truth.
+4. Use confirmed examples for contextual guidance. Propose narrow vocabulary
+   rules after repeated consistent corrections across distinct dictations;
+   conflicting corrections must prevent automatic promotion. The recurrence
+   threshold needs evaluation rather than an assumed magic number.
+5. Provide a visible learning switch and inspect/edit/delete/reset controls.
+   Unsupported editors retain explicit **Teach Nami** as the fallback. Absence
+   of an edit is not proof the result was correct.
+
+Do not log global keystrokes, inspect unrelated fields, or infer approval from
+silence. No cross-user learning, uploads, account, or synchronization is required.
 
 Whisper vocabulary prompting is a later independent experiment using confirmed
 names/terms, measured on recognition accuracy. Personalization of cleanup must
@@ -275,7 +307,7 @@ cancellation, focus changes during cleanup, provider failure, invalid/empty
 output, unavailable models, legacy history, and exactly-once copy/paste. Real
 model comparisons are explicit opt-in evaluations, not default unit tests.
 
-Existing commands (cleanup commands do not exist yet):
+Existing verification commands (opt-in model probes are documented in the experiment README):
 
 ```sh
 swift test

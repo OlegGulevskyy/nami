@@ -1,4 +1,5 @@
 import AppKit
+import NamiCore
 import KeyboardShortcuts
 import SwiftUI
 import UniformTypeIdentifiers
@@ -6,7 +7,7 @@ import UniformTypeIdentifiers
 public struct StudioView: View {
     @Bindable var session: StudioSession
     public enum Page: String, CaseIterable {
-        case history = "History", settings = "Settings", permissions = "Permissions", model = "Local model", about = "About Nami", debugging = "Internal debugging"
+        case history = "History", settings = "Settings", permissions = "Permissions", model = "Models", about = "About Nami", debugging = "Internal debugging"
 
         var symbol: String {
             switch self {
@@ -105,7 +106,8 @@ public struct StudioView: View {
             shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
         }
         .onExitCommand {
-            if page == .debugging && session.debugging.isBusy { session.debugging.cancel() }
+            if page == .debugging && session.debugging.cleanupLab.isBusy { session.debugging.cleanupLab.cancel() }
+            else if page == .debugging && session.debugging.isBusy { session.debugging.cancel() }
             else if page != .history { page = .history }
             else if searchVisible { query = ""; searchVisible = false }
             else { session.cancel() }
@@ -370,6 +372,9 @@ private struct RecordingHistoryRow: View {
     @State private var copied = false
     @State private var hovered = false
     @State private var confirmDelete = false
+    @State private var showOriginal = false
+
+    private var needsAttention: Bool { run.historyNotice?.needsAttention == true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -379,7 +384,7 @@ private struct RecordingHistoryRow: View {
                 Text("\(Int(run.audioSeconds.rounded())) sec")
                 if run.engine == "fake" { Text("·  Demo").foregroundStyle(.orange) }
                 Spacer()
-                if session.playing && session.selectedRunID == run.id || hovered {
+                if session.playing && session.selectedRunID == run.id || hovered || needsAttention {
                     Button {
                         if session.selectedRunID != run.id { session.stopPlayback(); session.selectedRunID = run.id }
                         session.togglePlayback()
@@ -390,9 +395,21 @@ private struct RecordingHistoryRow: View {
                     .accessibilityLabel(session.playing && session.selectedRunID == run.id ? "Stop playback" : "Listen to recording")
                     .help("Listen to recording")
                 }
+                if session.retranscribingRunID == run.id {
+                    ProgressView().controlSize(.small)
+                        .accessibilityLabel("Re-transcribing recording")
+                        .help("Re-transcribing recording…")
+                } else if hovered || confirmDelete {
+                    Button { session.retranscribeRun(run.id) } label: { Image(systemName: "arrow.clockwise") }
+                        .buttonStyle(.plain)
+                        .disabled(session.busyForUpdate)
+                        .accessibilityLabel("Re-transcribe recording")
+                        .help("Re-transcribe using current settings")
+                }
                 if hovered || confirmDelete {
                     Button { confirmDelete = true } label: { Image(systemName: "trash") }
                         .buttonStyle(.plain)
+                        .disabled(session.retranscribingRunID == run.id)
                         .accessibilityLabel("Delete recording")
                         .help("Delete recording")
                 }
@@ -402,33 +419,55 @@ private struct RecordingHistoryRow: View {
                     copied = session.copyTranscript()
                 } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
                     .buttonStyle(.plain).frame(width: 24, height: 24)
-                    .disabled(run.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!run.hasTranscript)
                     .help(copied ? "Copied" : "Copy transcript")
                     .accessibilityLabel(copied ? "Transcript copied" : "Copy transcript")
             }.font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-            Text(run.displayText)
-                .font(run.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                      ? .system(size: 17) : session.settings.transcriptFont.font)
-                .lineSpacing(6).textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 16)
-            StudioStyle.divider
+            RecordingHistoryText(run: run, transcriptFont: session.settings.transcriptFont.font)
+                .padding(.bottom, needsAttention ? 2 : 16)
+            if let result = run.cleanupResult {
+                HStack(spacing: 12) {
+                    Text("\(CleanupEngine.title(for: result.provider)) · \(Int(result.elapsedSeconds * 1000)) ms · \(result.succeeded ? "Cleanup applied" : "Original kept")")
+                        .help(result.reason ?? "Original transcript is available below.")
+                    Spacer()
+                    Button(showOriginal ? "Hide original" : "Show original") { showOriginal.toggle() }
+                    Button("Copy original") { _ = session.copyOriginalTranscript(run) }
+                }.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+                if showOriginal {
+                    Text(run.rawTranscript ?? run.transcript).font(.system(size: 15)).lineSpacing(5)
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14).background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if !needsAttention { StudioStyle.divider }
         }
-        .padding(.top, 12).padding(.bottom, 3)
+        .padding(.top, 12).padding(.bottom, needsAttention ? 14 : 3)
+        .padding(.horizontal, needsAttention ? 14 : 0)
+        .background(needsAttention ? RecordingHistoryNotice.background : .clear,
+                    in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            if needsAttention {
+                RoundedRectangle(cornerRadius: 10).strokeBorder(RecordingHistoryNotice.border, lineWidth: 1)
+            }
+        }
+        .padding(.bottom, needsAttention ? 10 : 0)
         .contentShape(Rectangle()).onHover { hovered = $0 }
         .contextMenu {
             Button("Copy transcript") {
                 if session.selectedRunID != run.id { session.stopPlayback() }
                 session.selectedRunID = run.id; copied = session.copyTranscript()
-            }
+            }.disabled(!run.hasTranscript)
             Button("Listen to recording") {
                 session.stopPlayback(); session.selectedRunID = run.id; session.togglePlayback()
             }.disabled(session.phase.busy)
+            Button("Re-transcribe recording") { session.retranscribeRun(run.id) }
+                .disabled(session.busyForUpdate)
             if let url = run.savedURL {
                 Button("Show audio in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
             Divider()
             Button("Delete recording…", role: .destructive) { confirmDelete = true }
+                .disabled(session.retranscribingRunID == run.id)
         }
         .confirmationDialog("Delete this recording?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) { session.deleteRun(run.id) }

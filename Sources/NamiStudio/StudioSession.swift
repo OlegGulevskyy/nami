@@ -6,6 +6,7 @@ import OSLog
 import NamiAudio
 import NamiCore
 import NamiWhisperKit
+import NamiMLXCleanup
 
 public enum StudioPhase: String, Sendable {
     case idle, preparing, recording, processing, cancelling, failed
@@ -33,10 +34,13 @@ public struct RecordingRun: Identifiable, Codable, Sendable {
     // archived runs opens the WAV on demand, even with an unlimited history.
     public var samples: [Float] = []
     public var outcome: RecordingOutcome = .completed
+    public var rawTranscript: String?
+    public var cleanupResult: CleanupResult?
 
     private enum CodingKeys: String, CodingKey {
         case id, date, transcript, audioSeconds, latency, averageDB, peakDB
         case input, savedURL, engine, model, prompt, outcome
+        case rawTranscript, cleanupResult
     }
 
     public var displayText: String {
@@ -53,7 +57,9 @@ public struct RecordingRun: Identifiable, Codable, Sendable {
 @MainActor @Observable
 public final class StudioSession {
     public var updates: AppUpdates?
-    public var busyForUpdate: Bool { phase.busy || debugging.isBusy }
+    public var busyForUpdate: Bool { phase.busy || debugging.isBusy || debugging.cleanupLab.isBusy || cleanupService.managingModels || modelMaintenance }
+    private(set) var modelMaintenance = false
+    @ObservationIgnored lazy var modelLibrary = ModelLibrary(roots: [cleanupService.modelsRoot, debugging.directory.appendingPathComponent("Models")])
     public let permissions: StudioPermissions
     public let modifierShortcut = ModifierRecordingShortcut()
     public var settings: StudioSettings {
@@ -63,6 +69,8 @@ public final class StudioSession {
     }
     public let project: URL
     public private(set) var phase: StudioPhase = .idle
+    public private(set) var isCleaningUp = false
+    public private(set) var retranscribingRunID: UUID?
     public private(set) var status = "Your next thought starts here."
     public private(set) var errorMessage: String?
     public private(set) var modelLoaded = false
@@ -84,6 +92,7 @@ public final class StudioSession {
     public private(set) var prompts: [ReadingPrompt] = []
     public private(set) var playing = false
     public let debugging: DebuggingSession
+    var cleanupService: CleanupService { debugging.cleanupLab.service }
 
     @ObservationIgnored private let historyStore: RecordingHistoryStore
     @ObservationIgnored private let engineBuilder: @MainActor (StudioSettings) throws -> any TranscriptionEngine
@@ -94,6 +103,7 @@ public final class StudioSession {
     @ObservationIgnored private var engine: (any TranscriptionEngine)?
     @ObservationIgnored private var engineKey = ""
     @ObservationIgnored private var preparation: EnginePreparation?
+    @ObservationIgnored private var retiredPreparations: [EnginePreparation] = []
     @ObservationIgnored private var preparationID = UUID()
     @ObservationIgnored private var automaticPreparationEnabled = false
     private static let startupLog = Logger(subsystem: "local.nami.studio", category: "Startup")
@@ -113,6 +123,8 @@ public final class StudioSession {
                 // background test run can never disturb someone using the Mac.
                 pastePreparer: @escaping @MainActor () -> PreparedTranscriptPaste,
                 engineBuilder: (@MainActor (StudioSettings) throws -> any TranscriptionEngine)? = nil,
+                cleanupProcessors: [CleanupEngine: any TextProcessor] = [:],
+                modelDirectory: URL? = nil,
                 captureBuilder: @escaping @MainActor (String?) -> any AudioCapturing,
                 inputDevicesProvider: @escaping @MainActor () -> [AudioInputDevice] = { AudioInputDevice.available() },
                 clipboardWriter: @escaping @MainActor (String) -> Bool) {
@@ -121,6 +133,7 @@ public final class StudioSession {
         let debuggingDirectory = historyDirectory?.appendingPathComponent("InternalDebugging")
             ?? RecordingHistoryStore.defaultDirectory.deletingLastPathComponent().appendingPathComponent("InternalDebugging")
         self.debugging = DebuggingSession(directory: debuggingDirectory,
+            cleanupService: CleanupService(processors: cleanupProcessors, modelsRoot: modelDirectory ?? QwenModelAssets.root),
             apiKeyStore: CommandLine.arguments.contains("--snapshot") ? nil
                 : .keychain(account: debuggingDirectory.standardizedFileURL.path))
         self.permissions = permissions ?? StudioPermissions()
@@ -203,9 +216,11 @@ public final class StudioSession {
     public func prepareForRecording() {
         automaticPreparationEnabled = true
         refreshPermissions()
+        if settings.cleanupEnabled { cleanupService.prewarm(settings.cleanupEngine) }
     }
 
     private func prepareInBackground() {
+        guard !modelMaintenance else { return }
         guard settings.engine != "whisperkit" || !settings.modelFolder.isEmpty else { return }
         do { _ = try preparationFor(settings) }
         catch { modelPreparationError = error.localizedDescription }
@@ -224,8 +239,10 @@ public final class StudioSession {
     }
 
     private func settingsChanged() {
+        if settings.cleanupEnabled { cleanupService.prewarm(settings.cleanupEngine) }
         if !phase.busy {
             if engineKey != key(settings) {
+                retainUnfinishedPreparation()
                 preparation?.cancel()
                 preparation = nil; preparationID = UUID()
                 engine = nil; modelLoaded = false; modelPreparing = false
@@ -240,7 +257,7 @@ public final class StudioSession {
 
     public func startRecording() {
         let requestedAt = ContinuousClock.now
-        guard !phase.busy, !debugging.isBusy, permissionsReady() else { return }
+        guard !modelMaintenance, !phase.busy, !debugging.isBusy, !debugging.cleanupLab.isBusy, permissionsReady() else { return }
         debugging.stopPlayback()
         let id = begin(), date = Date()
         status = "Starting microphone…"
@@ -251,6 +268,7 @@ public final class StudioSession {
             guard let self else { return }
             var samples: [Float] = []
             var stats = AudioStatistics()
+            var rawText: String?
             do {
                 try self.check(id)
                 self.refreshPermissions()
@@ -264,6 +282,7 @@ public final class StudioSession {
                 self.inputName = capture.inputDescription
                 self.phase = .recording
                 self.status = "Listening. Speak naturally."
+                if options.cleanupEnabled { self.cleanupService.prewarm(options.cleanupEngine) }
                 let startedAt = ContinuousClock.now
                 // Capture must never wait for the model. Drain the stream into
                 // our recording buffer while preparation runs separately.
@@ -318,12 +337,13 @@ public final class StudioSession {
                 }
                 let text = try await engine.finish(sessionID: id)
                 try self.check(id)
-                self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
+                rawText = text
+                try await self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
                               latency: Self.seconds(since: stop), input: self.inputName,
                               options: options, prompt: prompt, paste: paste)
             } catch {
                 self.keepUnfinished(id: id, date: date, samples: samples, statistics: stats,
-                                    input: self.inputName, options: options, prompt: prompt, error: error)
+                                    input: self.inputName, options: options, prompt: prompt, error: error, rawText: rawText)
                 await self.failed(error, id: id)
             }
             self.cleanup(id)
@@ -331,18 +351,43 @@ public final class StudioSession {
     }
 
     public func transcribeFile(_ url: URL) {
-        guard !phase.busy, !debugging.isBusy, permissionsReady() else { return }
+        transcribeAudio(url, replacing: nil)
+    }
+
+    /// Reuse the saved take with today's model, vocabulary, and cleanup settings.
+    public func retranscribeRun(_ id: UUID) {
+        guard let run = runs.first(where: { $0.id == id }) else { return }
+        transcribeAudio(run.savedURL, replacing: run)
+    }
+
+    private func transcribeAudio(_ url: URL?, replacing previous: RecordingRun?) {
+        guard !busyForUpdate, permissionsReady() else { return }
         debugging.stopPlayback()
-        let id = begin(), date = Date(), options = settings
+        let id = begin(id: previous?.id), date = previous?.date ?? Date()
+        let input = previous?.input ?? url?.lastPathComponent ?? "Saved recording"
+        let prompt = previous?.prompt ?? ""
+        var options = settings
+        if previous != nil {
+            retranscribingRunID = id
+            selectedRunID = id
+            options.copyWhenFinished = false
+            status = "Re-transcribing your recording…"
+        }
         operation = Task { [weak self] in
             guard let self else { return }
             var samples: [Float] = []
             var stats = AudioStatistics()
+            var rawText: String?
             do {
-                samples = try AudioFile.read(url)
+                if let previous, !previous.samples.isEmpty { samples = previous.samples }
+                else if let url { samples = try AudioFile.read(url) }
+                else { throw StudioError.message("The saved audio for this recording is unavailable.") }
+                guard !samples.isEmpty else { throw EngineError.noAudio }
                 stats.append(samples)
-                _ = self.archive(id: id, date: date, text: "", samples: samples, statistics: stats,
-                                 input: url.lastPathComponent, options: options, prompt: "", outcome: .interrupted)
+                if previous == nil {
+                    _ = self.archive(id: id, date: date, text: "", samples: samples, statistics: stats,
+                                     input: input, options: options, prompt: prompt, outcome: .interrupted)
+                }
                 let engine = try await self.preparedEngine(options)
                 try self.check(id)
                 try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language,
@@ -352,19 +397,22 @@ public final class StudioSession {
                     try await engine.append(AudioChunk(samples: Array(samples[offset..<min(samples.count, offset + 1600)]), timestamp: Double(offset) / AudioChunk.sampleRate), sessionID: id)
                 }
                 self.phase = .processing
-                self.status = "Transcribing \(url.lastPathComponent)…"
+                self.status = previous == nil ? "Transcribing \(input)…" : "Re-transcribing your recording…"
                 self.capturedSeconds = stats.duration
                 self.elapsed = stats.duration
                 self.averageDB = stats.rmsDBFS
                 let stop = ContinuousClock.now
                 let text = try await engine.finish(sessionID: id)
                 try self.check(id)
-                self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
-                              latency: Self.seconds(since: stop), input: url.lastPathComponent,
-                              options: options, prompt: "")
+                rawText = text
+                try await self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
+                              latency: Self.seconds(since: stop), input: input,
+                              options: options, prompt: prompt, replacing: previous)
             } catch {
-                self.keepUnfinished(id: id, date: date, samples: samples, statistics: stats,
-                                    input: url.lastPathComponent, options: options, prompt: "", error: error)
+                if previous == nil {
+                    self.keepUnfinished(id: id, date: date, samples: samples, statistics: stats,
+                                        input: input, options: options, prompt: prompt, error: error, rawText: rawText)
+                }
                 await self.failed(error, id: id)
             }
             self.cleanup(id)
@@ -381,7 +429,7 @@ public final class StudioSession {
     }
 
     func startDebugRecording() {
-        guard !phase.busy, !debugging.isBusy, permissionsReady() else { return }
+        guard !modelMaintenance, !phase.busy, !debugging.isBusy, permissionsReady() else { return }
         stopPlayback()
         debugging.startRecording(microphoneUID: settings.microphoneUID, language: settings.language)
     }
@@ -408,6 +456,12 @@ public final class StudioSession {
     @discardableResult public func copyTranscript() -> Bool {
         guard let run = selectedRun, !run.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         return copyToClipboard(run.transcript)
+    }
+
+    @discardableResult public func copyOriginalTranscript(_ run: RecordingRun) -> Bool {
+        let text = run.rawTranscript ?? run.transcript
+        guard !text.isEmpty else { return false }
+        return copyToClipboard(text)
     }
 
     private func copyToClipboard(_ text: String) -> Bool {
@@ -443,6 +497,7 @@ public final class StudioSession {
     /// Deletes the transcript and its audio from history. Extra audio copies the
     /// user chose to keep in their own folder are left untouched.
     public func deleteRun(_ id: UUID) {
+        guard retranscribingRunID != id else { return }
         guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
         if selectedRunID == id { stopPlayback() }
         do { try historyStore.delete(id) }
@@ -457,13 +512,13 @@ public final class StudioSession {
     public func stopPlayback() { playbackTask?.cancel(); player?.stop(); player = nil; playing = false }
     public func dismissError() { errorMessage = nil; if phase == .failed { phase = .idle } }
 
-    private func begin() -> UUID {
+    private func begin(id: UUID? = nil) -> UUID {
         stopPlayback()
-        errorMessage = nil; phase = .preparing; status = "Preparing the local model…"
+        errorMessage = nil; phase = .preparing; isCleaningUp = false; status = "Preparing the local model…"
         elapsed = 0; capturedSeconds = 0; level = 0; averageDB = -.infinity
         captureStartSeconds = nil; firstAudioSeconds = nil
         meterHistory = Array(repeating: 0, count: 64)
-        let id = UUID(); activeID = id; stoppedAt = nil
+        let id = id ?? UUID(); activeID = id; stoppedAt = nil
         return id
     }
 
@@ -477,6 +532,7 @@ public final class StudioSession {
             return preparation
         }
         let nextEngine = try engineBuilder(options)
+        retainUnfinishedPreparation()
         preparation?.cancel()
         engine = nextEngine; engineKey = nextKey
         modelLoaded = false; modelPreparing = true; modelPreparationError = nil
@@ -517,12 +573,12 @@ public final class StudioSession {
 
     private func archive(id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
                          latency: Double = 0, input: String, options: StudioSettings, prompt: String,
-                         outcome: RecordingOutcome) -> RecordingRun {
+                         outcome: RecordingOutcome, rawText: String? = nil, cleanupResult: CleanupResult? = nil) -> RecordingRun {
         let run = RecordingRun(id: id, date: date, transcript: text, audioSeconds: statistics.duration,
             latency: latency, averageDB: statistics.rmsDBFS, peakDB: statistics.peakDBFS,
             input: input, savedURL: nil, engine: options.engine,
             model: URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: prompt,
-            samples: samples, outcome: outcome)
+            samples: samples, outcome: outcome, rawTranscript: rawText, cleanupResult: cleanupResult)
         do { return try historyStore.save(run) }
         catch {
             errorMessage = "Could not save this recording to history. Keep Nami open to retain its audio and text. \(error.localizedDescription)"
@@ -531,21 +587,57 @@ public final class StudioSession {
     }
 
     private func keepUnfinished(id: UUID, date: Date, samples: [Float], statistics: AudioStatistics,
-                                input: String, options: StudioSettings, prompt: String, error: Error) {
+                                input: String, options: StudioSettings, prompt: String, error: Error, rawText: String? = nil) {
         guard !samples.isEmpty else { return }
         let cancelled = error is CancellationError || error as? EngineError == .cancelled || phase == .cancelling
-        let run = archive(id: id, date: date, text: "", samples: samples, statistics: statistics,
-                          input: input, options: options, prompt: prompt, outcome: cancelled ? .cancelled : .failed)
+        let run = archive(id: id, date: date, text: rawText ?? "", samples: samples, statistics: statistics,
+                          input: input, options: options, prompt: prompt, outcome: cancelled ? .cancelled : .failed, rawText: rawText)
         runs.insert(run, at: 0)
         selectedRunID = id
     }
 
     private func complete(id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
                           latency: Double, input: String, options: StudioSettings, prompt: String,
-                          paste: PreparedTranscriptPaste? = nil) {
-        let run = archive(id: id, date: date, text: text, samples: samples, statistics: statistics,
-                          latency: latency, input: input, options: options, prompt: prompt, outcome: .completed)
-        runs.insert(run, at: 0)
+                          paste: PreparedTranscriptPaste? = nil, replacing previous: RecordingRun? = nil) async throws {
+        let started = ContinuousClock.now
+        let original = text
+        var text = text
+        var processing: CleanupResult?
+        if options.cleanupEnabled, !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            isCleaningUp = true
+            status = "Cleaning up your dictation…"
+            // Persist ASR before awaiting another model, including when the app is interrupted.
+            if previous == nil {
+                _ = archive(id: id, date: date, text: original, samples: samples, statistics: statistics,
+                            latency: latency, input: input, options: options, prompt: prompt,
+                            outcome: .interrupted, rawText: original)
+            }
+            let memory = options.cleanupUseMemory ? debugging.cleanupLab.memory : CleanupMemory()
+            processing = try await cleanupService.run(.init(id: id, rawText: original,
+                language: options.language, memory: memory), engine: options.cleanupEngine,
+                timeout: options.cleanupTimeoutSeconds)
+            try check(id)
+            text = processing?.text ?? original
+        }
+        try check(id)
+        if let previous {
+            // Replace metadata only after the entire retry succeeds. A failed save
+            // leaves the old transcript in memory and on disk, and audio is immutable.
+            let run = RecordingRun(id: id, date: previous.date, transcript: text,
+                audioSeconds: previous.audioSeconds, latency: latency + Self.seconds(since: started),
+                averageDB: previous.averageDB, peakDB: previous.peakDB, input: previous.input,
+                savedURL: previous.savedURL, engine: options.engine,
+                model: URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: previous.prompt,
+                samples: samples, outcome: .completed, rawTranscript: options.cleanupEnabled ? original : nil,
+                cleanupResult: processing)
+            let stored = try historyStore.save(run)
+            if let index = runs.firstIndex(where: { $0.id == id }) { runs[index] = stored }
+        } else {
+            let run = archive(id: id, date: date, text: text, samples: samples, statistics: statistics,
+                          latency: latency + Self.seconds(since: started), input: input, options: options, prompt: prompt,
+                          outcome: .completed, rawText: options.cleanupEnabled ? original : nil, cleanupResult: processing)
+            runs.insert(run, at: 0)
+        }
         selectedRunID = id
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             status = "No speech recognized. Listen back to check the recording."
@@ -560,6 +652,8 @@ public final class StudioSession {
                 status = "Your transcript is ready. Copy it whenever you need it."
             }
         }
+        if let processing, !processing.succeeded { status += " Cleanup skipped; original text kept." }
+        isCleaningUp = false
         // Keep the indicator processing until publication and the paste handoff finish.
         phase = .idle
     }
@@ -580,10 +674,61 @@ public final class StudioSession {
 
     private func cleanup(_ id: UUID) {
         guard activeID == id else { return }
-        activeID = nil; operation = nil; ticker?.cancel(); ticker = nil; level = 0
+        activeID = nil; operation = nil; ticker?.cancel(); ticker = nil; level = 0; isCleaningUp = false
+        retranscribingRunID = nil
         if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }
     }
     private func key(_ options: StudioSettings) -> String { options.engine + "|" + options.modelFolder }
+
+    private func retainUnfinishedPreparation() {
+        retiredPreparations.removeAll { $0.result != nil }
+        if let preparation, preparation.result == nil { retiredPreparations.append(preparation) }
+    }
+
+    func refreshModels() {
+        modelLibrary.refresh(knownFolders: [settings.modelFolder] + debugging.workspace.models.map(\.folder),
+                             catalog: debugging.availableModels)
+        cleanupService.refreshAvailability()
+    }
+
+    func deleteTranscriptionModel(_ model: TranscriptionModel) async throws {
+        guard !busyForUpdate else { throw StudioError.message("Finish the current task before deleting a model.") }
+        guard modelLibrary.isManaged(model.folder) else { throw StudioError.message("Manage this external model folder in Finder.") }
+        modelMaintenance = true
+        defer { modelMaintenance = false; refreshModels() }
+        for old in retiredPreparations { await old.cancelAndWait() }
+        retiredPreparations.removeAll()
+        let selected = URL(fileURLWithPath: settings.modelFolder).standardizedFileURL.resolvingSymlinksInPath() == model.folder.resolvingSymlinksInPath()
+        if selected {
+            await preparation?.cancelAndWait()
+            preparation = nil; preparationID = UUID(); engine = nil; engineKey = ""
+            modelLoaded = false; modelPreparing = false; modelPreparationError = nil
+            // Persist the cleared selection before deleting files. A failed save
+            // must not leave the next launch pointing at a deleted model.
+            var updated = settings
+            updated.modelFolder = ""
+            try updated.save(project: project)
+            settings = updated
+        }
+        try modelLibrary.delete(model)
+        debugging.setModelEnabled(model.id, enabled: false)
+    }
+
+    func deleteCleanupModel(_ model: QwenModel) async throws {
+        guard !busyForUpdate else { throw StudioError.message("Finish the current task before deleting a model.") }
+        modelMaintenance = true
+        defer { modelMaintenance = false; refreshModels() }
+        try await cleanupService.deleteQwen(model)
+        if settings.cleanupEngine == model.engine {
+            var updated = settings
+            updated.cleanupEnabled = false
+            updated.cleanupEngine = .automatic
+            settings = updated
+        }
+        if model == .qwen06 { debugging.cleanupLab.compareQwen = false }
+        else { debugging.cleanupLab.compareQwen17 = false }
+        debugging.cleanupLab.savePreferences()
+    }
     private static func seconds(since start: ContinuousClock.Instant) -> Double {
         let d = start.duration(to: .now).components
         return Double(d.seconds) + Double(d.attoseconds) / 1e18
@@ -609,7 +754,7 @@ public final class StudioSession {
 #if DEBUG
 extension StudioSession {
     /// Reference content is confined to explicit screenshot runs, never normal launches.
-    public func loadDesignPreviewHistory() {
+    public func loadDesignPreviewHistory(includeIssues: Bool = false) {
         guard CommandLine.arguments.contains("--snapshot") else { return }
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: .now)
@@ -625,6 +770,21 @@ extension StudioSession {
                          transcript: text, audioSeconds: duration, latency: 0.8, averageDB: -20, peakDB: -6,
                          input: "Design preview", savedURL: nil, engine: "whisperkit", model: "Preview",
                          prompt: "", samples: [])
+        }
+        if includeIssues {
+            let issues: [(RecordingOutcome, String)] = [
+                (.failed, ""),
+                (.completed, "Remember to send the revised proposal before lunch."),
+                (.interrupted, "We should move the meeting to Thursday afternoon."),
+                (.cancelled, ""),
+                (.completed, "")
+            ]
+            runs = issues.enumerated().map { index, example in
+                RecordingRun(id: UUID(), date: calendar.date(bySettingHour: 11, minute: 59 - index,
+                    second: 0, of: today)!, transcript: example.1, audioSeconds: 30, latency: 0,
+                    averageDB: -21, peakDB: 0.023, input: "Design preview", savedURL: nil,
+                    engine: "whisperkit", model: "Preview", prompt: "", outcome: example.0)
+            } + runs
         }
         status = "Press your shortcut or click to record"
     }

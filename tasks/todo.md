@@ -1,6 +1,7 @@
 # Tasks — transcript cleanup and personalization
 
-Status: prepared; all implementation tasks pending. Requirements and gates:
+Status: first experiment implemented; complete stage gates remain pending.
+[Implementation notes](../evaluation/cleanup/README.md). Requirements and gates:
 [spec](../SPEC-cleanup.md). Sequencing and risks: [plan](plan.md).
 Paths below are proposed where a file does not yet exist. Split any task that
 grows beyond roughly five files before implementation.
@@ -10,6 +11,16 @@ cleanup and must extend that page. Users collect/reference samples, choose
 providers, and inspect results in the app; JSON/CLI work is not required.
 
 ## Stage A — prove the approach
+
+2026-09-28 checkpoint: Internal debugging has Transcription/Cleanup pages, a
+vocabulary baseline, Apple guided-output cleanup, downloadable Qwen3-0.6B via
+MLX, saved comparisons, and opt-in synthetic probes. The live toggle applies
+the selected engine before copy/paste, retains raw text in history, and enforces
+bounded fallback and cancellation. Explicit local vocabulary and correction
+retrieval can be tested with memory on/off. This covers implementation slices of
+A2–A4, B, and C; it does not complete the 40-case corpus, held-out evaluation,
+real-editor trials, or automatic correction capture. The original stage gates
+below remain broader than these implemented slices.
 
 - [ ] **A1. Extend the debugging corpus for cleanup.** Add desired cleaned text,
   verification and split labels to the saved samples and their editor. Seed 40
@@ -135,6 +146,16 @@ providers, and inspect results in the app; JSON/CLI work is not required.
 - [ ] **Checkpoint C:** trial daily use, extend the regression set with confirmed
   failures, verify reset removes future influence through retrieval, and document
   results in `TRACKER.md` and the local evaluation report.
+
+- [ ] **C4. Capture edits after paste in supported editors.** First validate a
+  single editor: establish the inserted range, observe stable edits through
+  Accessibility, reject ambiguous observations, and retain candidate provenance.
+  Add an opt-in learning switch and review/delete controls. Keep unsupported
+  editors on explicit correction capture. Treat repeated corrections as evidence
+  for a proposed scoped rule, never turn one arbitrary rewrite into a global rule.
+  Acceptance: no unrelated document text or keystrokes retained; focus changes,
+  sends, deletions and range ambiguity safely stop capture. Dependency: B2 and C2.
+  Split capture, candidate review, and rule-promotion work before implementation.
 
 ## Stage D — decide whether training is justified
 

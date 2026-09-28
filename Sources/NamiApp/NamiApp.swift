@@ -54,7 +54,7 @@ struct NamiApp: App {
     var body: some Scene {
         Window("Nami · Recording history", id: "studio") {
             StudioView(session: session, page: $page)
-                .onDisappear { session.cancel(); session.stopPlayback(); session.debugging.cancel(); session.debugging.stopPlayback() }
+                .onDisappear { session.cancel(); session.stopPlayback(); session.debugging.cancel(); session.debugging.cleanupLabCancel(); session.debugging.stopPlayback() }
                 .task { await runVisualCheckIfRequested() }
         }
         .defaultSize(width: 1080, height: 850)
@@ -82,6 +82,16 @@ struct NamiApp: App {
         do {
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
             try await Task.sleep(for: .milliseconds(300))
+            if args.contains("--cleanup-check") {
+                let result = try await session.debugging.prepareCleanupSnapshot()
+                try result.write(to: output.appendingPathComponent("cleanup-result.json"))
+                for size in [NSSize(width: 1080, height: 1050), NSSize(width: 760, height: 850)] {
+                    try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
+                        size: size, to: output.appendingPathComponent("cleanup-\(Int(size.width)).png"))
+                }
+                NSApplication.shared.terminate(nil)
+                return
+            }
             try render(to: output.appendingPathComponent("idle.png"))
             try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
                            size: NSSize(width: 1080, height: 850), to: output.appendingPathComponent("debugging-empty.png"))
@@ -125,6 +135,9 @@ struct NamiApp: App {
                            size: NSSize(width: 1440, height: 1000))
                 try render(to: output.appendingPathComponent("settings-full.png"), settingsPage: .general,
                            size: NSSize(width: 1080, height: 1600))
+                session.loadDesignPreviewHistory(includeIssues: true)
+                try render(to: output.appendingPathComponent("history-issues.png"), size: NSSize(width: 1080, height: 1200))
+                try render(to: output.appendingPathComponent("history-issues-compact.png"), size: NSSize(width: 760, height: 850))
             }
             #endif
             if let fileIndex = args.firstIndex(of: "--audio"), args.indices.contains(fileIndex + 1) {

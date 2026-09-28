@@ -52,5 +52,10 @@ final class EnginePreparation {
     }
 
     func cancel() { work?.cancel() }
+    func cancelAndWait() async {
+        let task = work
+        task?.cancel()
+        await task?.value
+    }
     deinit { work?.cancel() }
 }

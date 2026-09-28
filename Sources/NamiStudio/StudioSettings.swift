@@ -10,6 +10,10 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var saveAudio = false
     public var copyWhenFinished = true
     public var pasteWhenFinished = true
+    public var cleanupEnabled = false
+    public var cleanupEngine: CleanupEngine = .automatic
+    public var cleanupTimeoutSeconds = 1.0
+    public var cleanupUseMemory = true
     public var audioDirectory = ""
     /// nil follows the system default; a UID pins Nami to a specific microphone.
     public var microphoneUID: String?
@@ -17,6 +21,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case engine, modelFolder, language, vocabulary, transcriptFont, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
+        case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory
     }
 
     public init(from decoder: Decoder) throws {
@@ -30,6 +35,11 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         saveAudio = try values.decodeIfPresent(Bool.self, forKey: .saveAudio) ?? false
         copyWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .copyWhenFinished) ?? true
         pasteWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .pasteWhenFinished) ?? true
+        cleanupEnabled = try values.decodeIfPresent(Bool.self, forKey: .cleanupEnabled) ?? false
+        cleanupEngine = (try values.decodeIfPresent(String.self, forKey: .cleanupEngine)).flatMap(CleanupEngine.init(rawValue:)) ?? .automatic
+        let timeout = try values.decodeIfPresent(Double.self, forKey: .cleanupTimeoutSeconds) ?? 1
+        cleanupTimeoutSeconds = timeout.isFinite ? min(10, max(0.1, timeout)) : 1
+        cleanupUseMemory = try values.decodeIfPresent(Bool.self, forKey: .cleanupUseMemory) ?? true
         audioDirectory = try values.decodeIfPresent(String.self, forKey: .audioDirectory) ?? ""
         microphoneUID = try values.decodeIfPresent(String.self, forKey: .microphoneUID)
     }

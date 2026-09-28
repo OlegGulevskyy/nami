@@ -141,17 +141,32 @@ private actor WhisperRuntime {
 
     func transcribe(_ audio: [Float], language: String?, vocabulary: String) async throws -> String {
         guard let pipeline else { throw EngineError.notPrepared }
+        // Keep segment timestamps for long-form seeking; skipSpecialTokens still
+        // returns plain text. Disabling timestamps can end prompted windows early.
         var options = DecodingOptions(language: language, detectLanguage: language == nil,
-                                      skipSpecialTokens: true, withoutTimestamps: true)
+                                      skipSpecialTokens: true, withoutTimestamps: false)
+        // Clear per-session filters when vocabulary is removed or changed.
+        pipeline.textDecoder.logitsFilters = nil
         let prompt = vocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
         if !prompt.isEmpty {
             guard let tokenizer = pipeline.tokenizer else { throw EngineError.notPrepared }
-            let tokens = tokenizer.encode(text: " " + prompt)
+            let tokens = Array(tokenizer.encode(text: " " + prompt)
                 .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+                .suffix((Constants.maxTokenContext / 2) - 1))
             if !tokens.isEmpty {
                 // WhisperKit bounds the conditioning context, retaining its final tokens.
                 options.promptTokens = tokens
                 options.usePrefillPrompt = true
+                if pipeline.textDecoder.isModelMultilingual {
+                    // WhisperKit 1.1.0 only searches the first three prompt tokens
+                    // for the task token, so vocabulary disables its timestamp rules.
+                    // Supply the actual boundary: startofprev + vocabulary + SOT,
+                    // language, task, timestamp. `false` bypasses that faulty search;
+                    // it does not change the model or language being decoded.
+                    pipeline.textDecoder.logitsFilters = [TimestampRulesFilter(
+                        specialTokens: tokenizer.specialTokens, sampleBegin: tokens.count + 5,
+                        maxInitialTimestampIndex: nil, isModelMultilingual: false)]
+                }
             }
         }
         let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)

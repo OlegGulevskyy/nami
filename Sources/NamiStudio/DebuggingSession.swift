@@ -11,6 +11,28 @@ import NamiWhisperKit
 /// clipboard. Every model sees the same saved audio and reference snapshot.
 @MainActor @Observable
 public final class DebuggingSession {
+    enum Page: String, CaseIterable { case transcription = "Transcription", cleanup = "Cleanup" }
+    var page: Page = .transcription
+    let cleanupLab: CleanupLabSession
+    public func cleanupLabCancel() { cleanupLab.cancel() }
+
+    /// Explicit developer snapshot probe, using the snapshot app's temporary
+    /// history. Never downloads assets or reads the clipboard/microphone.
+    public func prepareCleanupSnapshot() async throws -> Data {
+        guard CommandLine.arguments.contains("--snapshot") else { throw StudioError.message("Snapshot mode required.") }
+        page = .cleanup
+        cleanupLab.input = "um can you check the name me deployment I think I think we need two instances"
+        cleanupLab.deadlineSeconds = 30
+        cleanupLab.compareApple = true
+        cleanupLab.compareQwen = true
+        cleanupLab.addVocabulary(heard: "name me", replacement: "Nami")
+        cleanupLab.compare()
+        while cleanupLab.isBusy { try await Task.sleep(for: .milliseconds(50)) }
+        guard let run = cleanupLab.latestRun else { throw StudioError.message(cleanupLab.errorMessage ?? "No cleanup result.") }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(run)
+    }
     private(set) var workspace = DebugWorkspace()
     var selectedSampleID: UUID?
     private(set) var isBusy = false
@@ -42,12 +64,14 @@ public final class DebuggingSession {
     @ObservationIgnored private var playbackTask: Task<Void, Never>?
 
     init(directory: URL,
+         cleanupService: CleanupService? = nil,
          apiKeyStore: ComparisonAPIKeyStore? = nil,
          environmentAPIKey: String = ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"] ?? "",
          engineBuilder: @escaping @MainActor (String) throws -> any TranscriptionEngine = { WhisperKitEngine(modelFolder: $0) },
          cloudTranscriber: CloudTranscriber = CloudTranscriber(),
          captureBuilder: @escaping @MainActor (String?) -> any AudioCapturing = { MicrophoneCapture(deviceUID: $0) }) {
         store = DebuggingStore(directory: directory)
+        cleanupLab = CleanupLabSession(directory: directory.appendingPathComponent("Cleanup"), service: cleanupService)
         self.apiKeyStore = apiKeyStore
         var initialAPIKey = environmentAPIKey
         do {
@@ -372,9 +396,10 @@ public final class DebuggingSession {
         }
     }
 
-    func downloadModel(_ name: String) {
-        guard availableModels.contains(name), begin("Downloading and preparing \(name)…") else { return }
-        let directory = store.directory.appendingPathComponent("Models", isDirectory: true)
+    func downloadModel(_ name: String, to root: URL? = nil) {
+        guard (availableModels.contains(name) || name == WhisperKitEngine.defaultModel || workspace.models.contains(where: { $0.name == name })),
+              ModelFiles.isWhisperVariant(name), begin("Downloading and preparing \(name)…") else { return }
+        let directory = root ?? cleanupLab.service.modelsRoot
         operation = Task { [weak self] in
             guard let self else { return }
             defer { self.finish() }
@@ -382,8 +407,16 @@ public final class DebuggingSession {
                 let folder = try await WhisperKitEngine.download(model: name, to: directory)
                 try Task.checkCancellation()
                 self.addModel(folder: folder)
+                self.setModelEnabledAfterDownload(folder)
                 self.status = "Model downloaded and added to the comparison."
             } catch { self.report(error) }
+        }
+    }
+
+    private func setModelEnabledAfterDownload(_ folder: URL) {
+        if let index = workspace.models.firstIndex(where: { $0.folder == folder.standardizedFileURL.resolvingSymlinksInPath().path }) {
+            workspace.models[index].enabled = true
+            save()
         }
     }
 

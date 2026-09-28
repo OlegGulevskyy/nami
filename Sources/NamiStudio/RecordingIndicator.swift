@@ -64,7 +64,8 @@ private final class RecordingIndicatorPanel: NSPanel {
 private struct SessionRecordingIndicator: View {
     var session: StudioSession
     var body: some View {
-        RecordingIndicatorView(phase: session.phase, levels: session.meterHistory, elapsed: session.elapsed)
+        RecordingIndicatorView(phase: session.phase, levels: session.meterHistory, elapsed: session.elapsed,
+                               cleaning: session.isCleaningUp)
     }
 }
 
@@ -74,11 +75,13 @@ public struct RecordingIndicatorView: View {
     let phase: StudioPhase
     let levels: [Double]
     let elapsed: Double
+    let cleaning: Bool
 
-    public init(phase: StudioPhase, levels: [Double] = [], elapsed: Double = 0) {
+    public init(phase: StudioPhase, levels: [Double] = [], elapsed: Double = 0, cleaning: Bool = false) {
         self.phase = phase
         self.levels = levels
         self.elapsed = elapsed
+        self.cleaning = cleaning
     }
 
     public var body: some View {
@@ -115,7 +118,7 @@ public struct RecordingIndicatorView: View {
         switch phase {
         case .preparing: "Getting ready…"
         case .cancelling: "Cancelling…"
-        default: "Transcribing…"
+        default: cleaning ? "Cleaning up…" : "Transcribing…"
         }
     }
 }

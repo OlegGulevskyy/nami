@@ -1,6 +1,10 @@
 # Plan — transcript cleanup and personalization
 
-Status: ASR comparison UI implemented; cleanup implementation remains pending.
+Status: dedicated cleanup comparison page, Apple/Qwen adapters, deadline runner,
+opt-in live cleanup with original recovery, and explicit personal memory implemented. See
+[current experiment and remaining gates](../evaluation/cleanup/README.md).
+The full held-out corpus, real-editor trials, provider selection, and automatic
+edit capture remain pending.
 Requirements: [SPEC-cleanup.md](../SPEC-cleanup.md).
 Execution checklist: [todo.md](todo.md).
 
@@ -55,6 +59,9 @@ No agent delegation is required by this plan.
   guards. Timeout falls back to raw, cancellation never pastes.
 - Keep vocabulary, style settings, and correction examples locally editable.
   Explicit feedback is the first learning mechanism.
+- Follow explicit feedback with supported-editor capture of corrections made
+  after paste. Track the inserted passage, reject ambiguous observations, and
+  validate repeated corrections before proposing broadly applied rules.
 - Keep existing recognition evaluation unchanged; cleanup has its own schema
   and scoring. Document new CLI commands when they actually exist.
 

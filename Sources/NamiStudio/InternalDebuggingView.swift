@@ -12,7 +12,7 @@ struct InternalDebuggingView: View {
     @State private var highlightDifferences = true
     @State private var downloadChoice = ""
 
-    private var locked: Bool { lab.isBusy || session.phase.busy || lab.loadFailed }
+    private var locked: Bool { lab.isBusy || session.phase.busy || session.modelMaintenance || lab.loadFailed }
     private var selectedModel: DebugModel? {
         lab.comparisonModel
     }
@@ -21,6 +21,27 @@ struct InternalDebuggingView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Picker("Debugging page", selection: $lab.page) {
+                    ForEach(DebuggingSession.Page.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 300)
+                Spacer()
+            }.padding(.horizontal, 28).padding(.vertical, 18)
+            StudioStyle.divider
+            if lab.page == .cleanup {
+                CleanupLabView(lab: lab.cleanupLab, studio: session,
+                    sourceText: lab.selectedResults.first {
+                        $0.error == nil && $0.model.id != CloudTranscriber.model.id && $0.language == "en"
+                    }?.transcript)
+            } else {
+                transcriptionPage
+            }
+        }
+    }
+
+    private var transcriptionPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 sourceControls

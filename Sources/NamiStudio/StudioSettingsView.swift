@@ -5,7 +5,7 @@ import SwiftUI
 
 public struct StudioSettingsView: View {
     public enum Page: String, CaseIterable {
-        case general = "General", permissions = "Permissions", model = "Local model", about = "About Nami"
+        case general = "General", permissions = "Permissions", model = "Models", about = "About Nami"
     }
 
     @Bindable private var session: StudioSession
@@ -22,7 +22,9 @@ public struct StudioSettingsView: View {
 
     public var body: some View {
         Group {
-            if page == .about {
+            if page == .model {
+                ModelsView(session: session)
+            } else if page == .about {
                 about
             } else {
                 ScrollView {
@@ -30,7 +32,7 @@ public struct StudioSettingsView: View {
                         switch page {
                         case .general: general
                         case .permissions: permissions
-                        case .model: model
+                        case .model: EmptyView()
                         case .about: EmptyView()
                         }
                         if let error = session.errorMessage {
@@ -292,46 +294,6 @@ public struct StudioSettingsView: View {
             StudioStyle.divider.padding(.top, 6)
         }
         .padding(.bottom, 20)
-    }
-
-    @ViewBuilder private var model: some View {
-        heading("A little intelligence. All local.", subtitle: "Your voice stays on your Mac, from audio to words.")
-        section("Recognition") {
-            row("Transcription engine") {
-                Menu {
-                    Button("WhisperKit · on-device") { session.settings.engine = "whisperkit" }
-                    Button("Demo · sample text") { session.settings.engine = "fake" }
-                } label: { Text(session.settings.engine == "fake" ? "Demo" : "WhisperKit") }.preferenceMenu()
-            }
-            if session.settings.engine == "fake" {
-                Text("Demo produces placeholder text. Choose WhisperKit to recognize your speech.")
-                    .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet).padding(.vertical, 16)
-            } else {
-                row("Local model", subtitle: session.modelName) {
-                    Button("Choose folder…", action: chooseModel).buttonStyle(.plain).preferenceControl()
-                }
-                HStack(spacing: 8) {
-                    Circle().fill(StudioStyle.green.opacity(0.6)).frame(width: 6, height: 6)
-                    Text(session.modelLoaded ? "Loaded and ready" : session.modelPreparing
-                         ? "Preparing in the background…" : "Waiting for model setup")
-                }.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet).padding(.top, 15)
-                Text("Nami prepares the model automatically and keeps it loaded while the app is open. You can record while it gets ready; your audio is kept until transcription can start.")
-                    .font(.system(size: 13)).lineSpacing(4).foregroundStyle(StudioStyle.quiet).padding(.top, 12)
-                if let error = session.modelPreparationError {
-                    Text(error).font(.system(size: 13)).foregroundStyle(.red).padding(.top, 8)
-                }
-            }
-        }.disabled(session.phase.busy)
-        section("Reading practice") {
-            row("Reading prompt", subtitle: "An optional passage for comparing recordings.") {
-                Menu {
-                    Button("Free speech") { session.selectedPromptID = "" }
-                    ForEach(session.prompts) { prompt in
-                        Button("\(prompt.id) · \(prompt.category)") { session.selectedPromptID = prompt.id }
-                    }
-                } label: { Text(session.selectedPrompt?.id ?? "Free speech") }.preferenceMenu()
-            }
-        }.disabled(session.phase.busy)
     }
 
     @ViewBuilder private var about: some View {

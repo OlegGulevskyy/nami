@@ -93,6 +93,13 @@ you return to Nami. Revoking a required permission stops an active recording.
    Transcripts are grouped by day. Click the search icon or press **⌘F** to search;
    hover a transcript for playback, or use its context menu. **⌘R** starts/stops recording.
 
+Hover a history item and click **Re-transcribe** (the circular arrow beside the
+trash icon) to recognize its saved audio again with the current model, vocabulary,
+and cleanup settings. It updates the same item, keeping its original date and
+audio. Failed, interrupted, and cancelled recordings can also be retried. The
+previous transcript stays intact if a retry fails or is cancelled. Re-transcribing
+does not automatically copy or paste; use **Copy** when the updated text is ready.
+
 Choose a **Microphone** in **Settings** to remember that device across app restarts,
 or choose **System default** to follow macOS. If a saved microphone is disconnected,
 Nami keeps the choice and asks you to reconnect it or choose another input.

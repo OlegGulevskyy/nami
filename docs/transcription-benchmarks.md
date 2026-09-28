@@ -1,5 +1,30 @@
 # Transcription comparison and agent workflow
 
+## Vocabulary truncation regression (28 September 2026)
+
+A saved 47.67-second recording returned only a few words with vocabulary hints,
+while the same audio produced a full paragraph without hints. This reproduced
+through `WhisperKitEngine`, independently of capture, history, or text cleanup.
+Enabling timestamps alone still dropped speech on repeated runs. WhisperKit
+1.1.0's multilingual timestamp filter searches only the first three prompt tokens
+for the task token; vocabulary shifts that token beyond the search. Nami now
+keeps segment timestamps and supplies the filter with the actual prompt boundary.
+The displayed transcript still excludes special tokens and timestamps.
+
+Run the opt-in regression with a local model, a recording longer than 30 seconds,
+and a text file containing at least three expected phrases, one per line, spanning
+the beginning, middle, and end. It checks cold and repeated prompted runs and
+switching vocabulary off on the same engine. It never opens the microphone,
+changes history, copies text, or uploads audio. Keep private fixtures out of Git.
+
+```sh
+NAMI_TEST_MODEL_FOLDER='/path/to/local/model' \
+NAMI_TEST_LONG_AUDIO_FILE='/path/to/recording.wav' \
+NAMI_TEST_EXPECTED_PHRASES_FILE='/path/to/phrases.txt' \
+NAMI_TEST_VOCABULARY='Example product, Example company' \
+swift test --filter longTranscriptionPreservesSpeechWithVocabularyAndWarmReuse
+```
+
 ## Baseline choice (27 September 2026)
 
 Start with **ElevenLabs Scribe v2**, an accessible, strong prerecorded-audio
