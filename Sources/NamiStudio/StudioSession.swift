@@ -108,11 +108,14 @@ public final class StudioSession {
     public init(project: URL,
                 historyDirectory: URL? = nil,
                 permissions: StudioPermissions? = nil,
-                pastePreparer: (@MainActor () -> PreparedTranscriptPaste)? = nil,
+                // No defaults: the live versions paste into the frontmost app, open the
+                // microphone and overwrite the clipboard. Tests must inject fakes so a
+                // background test run can never disturb someone using the Mac.
+                pastePreparer: @escaping @MainActor () -> PreparedTranscriptPaste,
                 engineBuilder: (@MainActor (StudioSettings) throws -> any TranscriptionEngine)? = nil,
-                captureBuilder: (@MainActor (String?) -> any AudioCapturing)? = nil,
+                captureBuilder: @escaping @MainActor (String?) -> any AudioCapturing,
                 inputDevicesProvider: @escaping @MainActor () -> [AudioInputDevice] = { AudioInputDevice.available() },
-                clipboardWriter: (@MainActor (String) -> Bool)? = nil) {
+                clipboardWriter: @escaping @MainActor (String) -> Bool) {
         self.project = project
         self.historyStore = RecordingHistoryStore(directory: historyDirectory ?? RecordingHistoryStore.defaultDirectory)
         let debuggingDirectory = historyDirectory?.appendingPathComponent("InternalDebugging")
@@ -121,7 +124,7 @@ public final class StudioSession {
             apiKeyStore: CommandLine.arguments.contains("--snapshot") ? nil
                 : .keychain(account: debuggingDirectory.standardizedFileURL.path))
         self.permissions = permissions ?? StudioPermissions()
-        self.pastePreparer = pastePreparer ?? { TranscriptPaster().prepare() }
+        self.pastePreparer = pastePreparer
         self.engineBuilder = engineBuilder ?? { settings in
             var config = EngineConfiguration()
             guard let backend = EngineConfiguration.Backend(rawValue: settings.engine) else {
@@ -132,12 +135,9 @@ public final class StudioSession {
             config.fakeTranscript = "This is a demo transcript. Switch to WhisperKit to recognize your speech."
             return try EngineFactory.make(config)
         }
-        self.captureBuilder = captureBuilder ?? { MicrophoneCapture(deviceUID: $0) }
+        self.captureBuilder = captureBuilder
         self.inputDevicesProvider = inputDevicesProvider
-        self.clipboardWriter = clipboardWriter ?? { text in
-            NSPasteboard.general.clearContents()
-            return NSPasteboard.general.setString(text, forType: .string)
-        }
+        self.clipboardWriter = clipboardWriter
         do {
             try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
             settings = try StudioSettings.load(project: project)
@@ -158,14 +158,20 @@ public final class StudioSession {
         refreshInput()
     }
 
+    /// Live integrations for the app only; tests must never pass these.
+    public static func systemPastePreparer() -> PreparedTranscriptPaste { TranscriptPaster().prepare() }
+    public static func systemCapture(deviceUID: String?) -> any AudioCapturing { MicrophoneCapture(deviceUID: deviceUID) }
+    public static func systemClipboardWriter(_ text: String) -> Bool {
+        NSPasteboard.general.clearContents()
+        return NSPasteboard.general.setString(text, forType: .string)
+    }
+
     public var historyDirectory: URL { historyStore.directory }
     public var selectedRun: RecordingRun? { runs.first { $0.id == selectedRunID } ?? runs.first }
     public var selectedPrompt: ReadingPrompt? { prompts.first { $0.id == selectedPromptID } }
     public var modelName: String {
         settings.engine == "fake" ? "Demo engine" : (settings.modelFolder.isEmpty ? "Choose a model folder" : URL(fileURLWithPath: settings.modelFolder).lastPathComponent)
     }
-    public var limit: Double { settings.timed ? min(60, max(5, settings.duration)) : 60 }
-
     public var selectedMicrophoneUnavailable: Bool {
         guard let uid = settings.microphoneUID else { return false }
         return !inputDevices.contains { $0.id == uid }
@@ -259,16 +265,14 @@ public final class StudioSession {
                 self.phase = .recording
                 self.status = "Listening. Speak naturally."
                 let startedAt = ContinuousClock.now
-                let maximum = options.timed ? min(60, max(5, options.duration)) : 60
                 // Capture must never wait for the model. Drain the stream into
-                // our bounded recording buffer while preparation runs separately.
+                // our recording buffer while preparation runs separately.
                 let preparation = try self.preparationFor(options, retryFailure: true)
                 self.ticker = Task { [weak self] in
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(50))
                         guard !Task.isCancelled, let self, self.phase == .recording else { return }
                         self.elapsed = Self.seconds(since: startedAt)
-                        if self.elapsed >= maximum { self.stopRecording(); return }
                     }
                 }
                 for try await chunk in stream {
@@ -277,23 +281,20 @@ public final class StudioSession {
                         self.firstAudioSeconds = Self.seconds(since: requestedAt)
                         Self.startupLog.info("First audio received after \(self.firstAudioSeconds!, privacy: .public) seconds")
                     }
-                    // Bound audio by frames too: hardware buffers can arrive just after the timer.
-                    let remaining = Int(maximum * AudioChunk.sampleRate) - samples.count
-                    guard remaining > 0 else { self.stopRecording(); break }
-                    let values = Array(chunk.samples.prefix(remaining))
-                    samples += values
-                    stats.append(values)
-                    var instant = AudioStatistics(); instant.append(values)
+                    samples += chunk.samples
+                    stats.append(chunk.samples)
+                    var instant = AudioStatistics(); instant.append(chunk.samples)
                     self.level = max(0, min(1, (instant.rmsDBFS + 60) / 60))
                     self.meterHistory.removeFirst(); self.meterHistory.append(self.level)
                     self.capturedSeconds = stats.duration
                     self.averageDB = stats.rmsDBFS
-                    if samples.count >= Int(maximum * AudioChunk.sampleRate) { self.stopRecording() }
                 }
                 self.ticker?.cancel()
                 capture.stop()
                 self.capture = nil
                 try self.check(id)
+                // A silent device must not look like a history or extra-copy failure.
+                guard !samples.isEmpty else { throw AudioInputError.noAudioReceived }
                 let stop = self.stoppedAt ?? .now
                 self.elapsed = stats.duration
                 self.phase = .processing
@@ -437,6 +438,20 @@ public final class StudioSession {
                 }
             }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Deletes the transcript and its audio from history. Extra audio copies the
+    /// user chose to keep in their own folder are left untouched.
+    public func deleteRun(_ id: UUID) {
+        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
+        if selectedRunID == id { stopPlayback() }
+        do { try historyStore.delete(id) }
+        catch {
+            errorMessage = "Could not delete this recording: \(error.localizedDescription)"
+            return
+        }
+        runs.remove(at: index)
+        if selectedRunID == id { selectedRunID = runs.indices.contains(index) ? runs[index].id : runs.last?.id }
     }
 
     public func stopPlayback() { playbackTask?.cancel(); player?.stop(); player = nil; playing = false }

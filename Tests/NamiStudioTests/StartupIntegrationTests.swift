@@ -19,11 +19,10 @@ import NamiCore
         accessibilityStatus: { false }, requestAccessibility: { false },
         requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: permissions, captureBuilder: { _ in capture },
+        permissions: permissions, pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in Issue.record("Diagnostic must not copy"); return false })
     session.settings.modelFolder = model
     session.settings.copyWhenFinished = false
-    session.settings.timed = false
     session.prepareForRecording()
     #expect(session.modelPreparing && session.phase == .idle)
     #expect(capture.starts == 0)

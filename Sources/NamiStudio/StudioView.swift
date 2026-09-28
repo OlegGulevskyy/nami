@@ -19,6 +19,17 @@ public struct StudioView: View {
             }
         }
 
+        /// Pressed with Command to switch pages from anywhere in the window.
+        var shortcutKey: Character? {
+            switch self {
+            case .history: "1"
+            case .settings: "2"
+            case .permissions: "3"
+            case .model: "4"
+            case .about, .debugging: nil
+            }
+        }
+
         var settingsPage: StudioSettingsView.Page? {
             switch self {
             case .history, .debugging: nil
@@ -158,13 +169,18 @@ public struct StudioView: View {
         .background(StudioStyle.sidebar)
     }
 
-    private func navigationItem(_ item: Page) -> some View {
-        Button { page = item } label: {
+    @ViewBuilder private func navigationItem(_ item: Page) -> some View {
+        let button = Button { page = item } label: {
             HStack(spacing: item == .debugging ? 8 : 10) {
                 Image(systemName: item.symbol).font(.system(size: 16)).frame(width: 20)
                 Text(item.rawValue).font(.system(size: item == .debugging ? 12 : 14, weight: page == item ? .medium : .regular))
                     .lineLimit(1).minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
+                if let key = item.shortcutKey {
+                    Text(verbatim: "⌘\(key)").font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(StudioStyle.quiet.opacity(0.8))
+                        .accessibilityHidden(true)
+                }
             }
             .foregroundStyle(page == item ? StudioStyle.green : StudioStyle.quiet)
             .padding(.horizontal, 12).frame(height: 40)
@@ -172,6 +188,11 @@ public struct StudioView: View {
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain).accessibilityAddTraits(page == item ? .isSelected : [])
+        if let key = item.shortcutKey {
+            button.keyboardShortcut(KeyEquivalent(key), modifiers: .command)
+        } else {
+            button
+        }
     }
 
     private var header: some View {
@@ -338,7 +359,7 @@ public struct StudioView: View {
     private func importAudio() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.audio]; panel.allowsMultipleSelection = false
-        panel.message = "Transcribe a recording up to 60 seconds long."
+        panel.message = "Choose a recording to transcribe."
         if panel.runModal() == .OK, let url = panel.url { session.transcribeFile(url) }
     }
 }
@@ -348,6 +369,7 @@ private struct RecordingHistoryRow: View {
     let run: RecordingRun
     @State private var copied = false
     @State private var hovered = false
+    @State private var confirmDelete = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -367,6 +389,12 @@ private struct RecordingHistoryRow: View {
                     .buttonStyle(.plain).disabled(session.phase.busy)
                     .accessibilityLabel(session.playing && session.selectedRunID == run.id ? "Stop playback" : "Listen to recording")
                     .help("Listen to recording")
+                }
+                if hovered || confirmDelete {
+                    Button { confirmDelete = true } label: { Image(systemName: "trash") }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Delete recording")
+                        .help("Delete recording")
                 }
                 Button {
                     if session.selectedRunID != run.id { session.stopPlayback() }
@@ -399,6 +427,13 @@ private struct RecordingHistoryRow: View {
             if let url = run.savedURL {
                 Button("Show audio in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
+            Divider()
+            Button("Delete recording…", role: .destructive) { confirmDelete = true }
+        }
+        .confirmationDialog("Delete this recording?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { session.deleteRun(run.id) }
+        } message: {
+            Text("The transcript and its audio will be removed from history. This can’t be undone.")
         }
         .task(id: copied) {
             guard copied else { return }

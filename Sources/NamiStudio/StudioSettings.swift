@@ -7,8 +7,6 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var language = "en"
     public var vocabulary = ""
     public var transcriptFont: TranscriptFont = .sourceSans
-    public var duration = 15.0
-    public var timed = true
     public var saveAudio = false
     public var copyWhenFinished = true
     public var pasteWhenFinished = true
@@ -18,7 +16,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case engine, modelFolder, language, vocabulary, transcriptFont, duration, timed, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
+        case engine, modelFolder, language, vocabulary, transcriptFont, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
     }
 
     public init(from decoder: Decoder) throws {
@@ -29,8 +27,6 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         vocabulary = try values.decodeIfPresent(String.self, forKey: .vocabulary) ?? ""
         transcriptFont = (try values.decodeIfPresent(String.self, forKey: .transcriptFont))
             .flatMap(TranscriptFont.init(rawValue:)) ?? .sourceSans
-        duration = try values.decodeIfPresent(Double.self, forKey: .duration) ?? 15
-        timed = try values.decodeIfPresent(Bool.self, forKey: .timed) ?? true
         saveAudio = try values.decodeIfPresent(Bool.self, forKey: .saveAudio) ?? false
         copyWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .copyWhenFinished) ?? true
         pasteWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .pasteWhenFinished) ?? true
@@ -55,7 +51,6 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         result.modelFolder = json["modelFolder"] as? String ?? result.modelFolder
         result.modelFolder = resolve(result.modelFolder, project: project)
         result.audioDirectory = resolve(result.audioDirectory, project: project)
-        result.duration = result.duration.isFinite ? min(60, max(5, result.duration)) : 15
         return result
     }
 

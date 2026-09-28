@@ -115,7 +115,7 @@ struct NamiBench {
             Defaults: nami.json in the working directory; --config PATH selects another file.
             CLI options override config. Download saves its model folder to the selected config.
             transcribe/record/benchmark accept --engine fake [--fake-text TEXT] instead of a model.
-            Audio stays in memory unless record --save-audio is given. Maximum duration: 60 seconds.
+            Audio stays in memory unless record --save-audio is given.
             Benchmark requires 20–30 verified references with 5–30-second audio files.
             See README.md for setup, measurement definitions and limitations.
             """)
@@ -160,8 +160,8 @@ struct NamiBench {
             print(text)
             print("Stop-to-final (batch): \(latency) s")
         } else {
-            guard let duration = Double(args.options["seconds"] ?? "10"), duration.isFinite, duration >= 1, duration <= 60 else {
-                throw CLIError("--seconds must be between 1 and 60.")
+            guard let duration = Double(args.options["seconds"] ?? "10"), duration.isFinite, duration >= 1 else {
+                throw CLIError("--seconds must be at least 1.")
             }
             if let path = args.options["save-audio"], FileManager.default.fileExists(atPath: path) {
                 throw CocoaError(.fileWriteFileExists)

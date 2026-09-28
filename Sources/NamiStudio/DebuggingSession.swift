@@ -153,23 +153,20 @@ public final class DebuggingSession {
                 let stream = try await capture.start()
                 try Task.checkCancellation()
                 self.recording = true
-                self.status = "Listening · stops at 60 seconds"
+                self.status = "Listening…"
                 let started = ContinuousClock.now
                 self.ticker = Task { [weak self] in
                     while !Task.isCancelled {
                         do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
                         guard let self, self.recording else { return }
                         self.elapsed = Self.seconds(since: started)
-                        if self.elapsed >= 60 { self.stopRecording(); return }
                     }
                 }
                 for try await chunk in stream {
                     try Task.checkCancellation()
-                    let remaining = 60 * Int(AudioChunk.sampleRate) - audio.count
-                    audio.append(contentsOf: chunk.samples.prefix(max(0, remaining)))
+                    audio.append(contentsOf: chunk.samples)
                     var stats = AudioStatistics(); stats.append(chunk.samples)
                     self.level = max(0, min(1, (stats.rmsDBFS + 60) / 60))
-                    if audio.count >= 60 * Int(AudioChunk.sampleRate) { self.stopRecording(); break }
                 }
                 try Task.checkCancellation()
                 try self.addSample(audio: audio, title: "Recording \(self.workspace.samples.count + 1)",
@@ -209,7 +206,7 @@ public final class DebuggingSession {
     }
 
     private func addSample(audio: [Float], title: String, source: String, language: String) throws {
-        guard !audio.isEmpty, audio.count <= 60 * Int(AudioChunk.sampleRate), audio.allSatisfy(\.isFinite) else {
+        guard !audio.isEmpty, audio.allSatisfy(\.isFinite) else {
             throw EngineError.invalidAudio
         }
         let sample = DebugSample(title: title, language: language,

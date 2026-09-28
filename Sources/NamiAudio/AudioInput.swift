@@ -1,19 +1,20 @@
 @preconcurrency import AVFoundation
+import AudioToolbox
 import CoreAudio
 import Foundation
 import NamiCore
 
 public enum AudioInputError: Error, LocalizedError {
-    case permissionDenied, invalidFormat, conversionFailed, overflow, tooLong, deviceUnavailable, deviceSelectionFailed
+    case permissionDenied, invalidFormat, conversionFailed, overflow, deviceUnavailable, deviceSelectionFailed, noAudioReceived
     public var errorDescription: String? {
         switch self {
         case .permissionDenied: "Enable microphone access for Nami (or your terminal when using the CLI) in System Settings → Privacy & Security → Microphone."
         case .invalidFormat: "No usable audio input format."
         case .conversionFailed: "Audio conversion failed."
         case .overflow: "Audio consumer fell behind; recording was cancelled rather than dropping samples."
-        case .tooLong: "Use a recording no longer than 60 seconds."
         case .deviceUnavailable: "Your selected microphone is unavailable. Reconnect it or choose another microphone."
         case .deviceSelectionFailed: "Could not use the selected microphone. Reconnect it or choose another microphone."
+        case .noAudioReceived: "No sound arrived from the microphone. Reconnect it or choose another microphone in Settings."
         }
     }
 }
@@ -68,7 +69,6 @@ private final class PCMConverter: @unchecked Sendable {
 public enum AudioFile {
     public static func read(_ url: URL) throws -> [Float] {
         let file = try AVAudioFile(forReading: url)
-        guard Double(file.length) / file.processingFormat.sampleRate <= 60 else { throw AudioInputError.tooLong }
         let converter = try PCMConverter(input: file.processingFormat)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096) else {
             throw AudioInputError.invalidFormat
@@ -116,6 +116,7 @@ public final class MicrophoneCapture: AudioCapturing {
     private var installed = false
     private var converter: PCMConverter?
     private var cursor: SampleCursor?
+    private var deviceInput: DeviceInput?
     private let deviceUID: String?
     public init(deviceUID: String? = nil) { self.deviceUID = deviceUID }
 
@@ -131,23 +132,27 @@ public final class MicrophoneCapture: AudioCapturing {
     }
 
     public func start() async throws -> AsyncThrowingStream<AudioChunk, Error> {
-        guard !installed else { throw EngineError.invalidState }
+        guard !installed, deviceInput == nil else { throw EngineError.invalidState }
         if AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
             guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AudioInputError.permissionDenied }
         }
-        let input = engine.inputNode
+        let pair = AsyncThrowingStream<AudioChunk, Error>.makeStream(bufferingPolicy: .bufferingOldest(128))
         if let deviceUID {
-            var device = try AudioInputDevice.deviceID(for: deviceUID)
-            guard let unit = input.audioUnit,
-                  AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
-                      kAudioUnitScope_Global, 0, &device, UInt32(MemoryLayout<AudioDeviceID>.size)) == noErr else {
-                throw AudioInputError.deviceSelectionFailed
-            }
+            // On macOS AVAudioEngine's input and output share one I/O unit, and
+            // switching only its input device leaves a stale format: depending on
+            // the device the engine fails to start or runs without delivering
+            // buffers. An input-only HAL unit opens exactly the selected device.
+            let device = try AudioInputDevice.deviceID(for: deviceUID)
+            let input = try DeviceInput(device: device)
+            inputDescription = "\(Self.name(of: device)): \(Int(input.format.sampleRate)) Hz, \(input.format.channelCount) channel(s)"
+            let tap = try makeTap(format: input.format, continuation: pair.continuation)
+            deviceInput = input
+            do { try input.start(tap) } catch { stop(); throw error }
+            return pair.stream
         }
+        let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         inputDescription = "\(Self.deviceName(input)): \(Int(format.sampleRate)) Hz, \(format.channelCount) channel(s)"
-        let pair = AsyncThrowingStream<AudioChunk, Error>.makeStream(bufferingPolicy: .bufferingOldest(128))
-        continuation = pair.continuation
         try installTap(on: input, format: format, continuation: pair.continuation)
         installed = true
         do { try engine.start() } catch { stop(); throw error }
@@ -158,18 +163,24 @@ public final class MicrophoneCapture: AudioCapturing {
     /// audio-style background queue without microphone access or a running engine.
     func installTap(on node: AVAudioNode, format: AVAudioFormat,
                     continuation: AsyncThrowingStream<AudioChunk, Error>.Continuation) throws {
+        let tap = try makeTap(format: format, continuation: continuation)
+        node.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in tap(buffer) }
+    }
+
+    private func makeTap(format: AVAudioFormat, continuation: AsyncThrowingStream<AudioChunk, Error>.Continuation)
+        throws -> @Sendable (AVAudioPCMBuffer) -> Void {
         self.continuation = continuation
         let converter = try PCMConverter(input: format)
-        // AVAudioEngine serializes callbacks for this tap.
+        // Audio callbacks for one capture are serialized.
         let cursor = SampleCursor()
         self.converter = converter
         self.cursor = cursor
-        // AVAudioEngine calls this Objective-C block on its audio queue. Explicit
-        // Sendable prevents it inheriting MainActor isolation from registration;
-        // otherwise Swift traps on the first buffer with dispatch_assert_queue.
+        // Audio callbacks run on an audio thread. Explicit Sendable prevents the
+        // closure inheriting MainActor isolation from registration; otherwise
+        // Swift traps on the first buffer with dispatch_assert_queue.
         // Captures are tap-owned state and a thread-safe stream continuation;
         // never capture the MainActor-isolated MicrophoneCapture instance here.
-        node.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in
+        return { @Sendable buffer in
             do {
                 let samples = try converter.convert(buffer)
                 guard !samples.isEmpty else { return }
@@ -185,6 +196,8 @@ public final class MicrophoneCapture: AudioCapturing {
     public func stop() {
         engine.stop()
         if installed { engine.inputNode.removeTap(onBus: 0); installed = false }
+        deviceInput?.stop()
+        deviceInput = nil
         // The tap has stopped; drain the resampler's remaining frames before EOF.
         if let converter, let cursor, let continuation {
             do {
@@ -212,7 +225,7 @@ public final class MicrophoneCapture: AudioCapturing {
         return name(of: device)
     }
 
-    private static func name(of device: AudioDeviceID) -> String {
+    static func name(of device: AudioDeviceID) -> String {
         var address = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var name: CFString?
@@ -227,3 +240,115 @@ public final class MicrophoneCapture: AudioCapturing {
 }
 
 private final class SampleCursor: @unchecked Sendable { var count = 0 }
+
+/// Input-only HAL unit bound to one device, delivering its native format.
+/// Buffers are owned here and only touched by the serialized input callback,
+/// or by stop() once the device no longer calls back.
+private final class DeviceInput: @unchecked Sendable {
+    let format: AVAudioFormat
+    private let unit: AudioUnit
+    private let buffer: AVAudioPCMBuffer
+    // Devices call back in small slices; batching ~100 ms keeps the bounded
+    // stream's headroom similar to an engine tap.
+    private let pending: AVAudioPCMBuffer
+    private let batchFrames: AVAudioFrameCount
+    private var tap: (@Sendable (AVAudioPCMBuffer) -> Void)?
+    private var running = false
+
+    init(device: AudioDeviceID) throws {
+        var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
+            componentSubType: kAudioUnitSubType_HALOutput, componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0, componentFlagsMask: 0)
+        var instance: AudioUnit?
+        guard let component = AudioComponentFindNext(nil, &description),
+              AudioComponentInstanceNew(component, &instance) == noErr, let unit = instance else {
+            throw AudioInputError.deviceSelectionFailed
+        }
+        do {
+            var enable: UInt32 = 1, disable: UInt32 = 0, device = device
+            var hardware = AudioStreamBasicDescription()
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            var frames: UInt32 = 0
+            var framesSize = UInt32(MemoryLayout<UInt32>.size)
+            // Element 1 is the input side and element 0 the output side of a HAL unit.
+            try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                kAudioUnitScope_Input, 1, &enable, UInt32(MemoryLayout<UInt32>.size)))
+            try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                kAudioUnitScope_Output, 0, &disable, UInt32(MemoryLayout<UInt32>.size)))
+            try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global, 0, &device, UInt32(MemoryLayout<AudioDeviceID>.size)))
+            try Self.check(AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Input, 1, &hardware, &size))
+            // The HAL unit converts sample format but not rate, so keep the device rate.
+            guard hardware.mSampleRate > 0, hardware.mChannelsPerFrame > 0,
+                  let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hardware.mSampleRate,
+                      channels: hardware.mChannelsPerFrame, interleaved: false) else {
+                throw AudioInputError.invalidFormat
+            }
+            var client = format.streamDescription.pointee
+            try Self.check(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Output, 1, &client, size))
+            try Self.check(AudioUnitGetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice,
+                kAudioUnitScope_Global, 0, &frames, &framesSize))
+            let capacity = max(frames, 4096), batchFrames = AVAudioFrameCount(format.sampleRate / 10)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity),
+                  let pending = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: batchFrames + capacity) else {
+                throw AudioInputError.invalidFormat
+            }
+            self.format = format
+            self.buffer = buffer
+            self.pending = pending
+            self.batchFrames = batchFrames
+            self.unit = unit
+        } catch {
+            AudioComponentInstanceDispose(unit)
+            throw error
+        }
+    }
+
+    deinit { AudioComponentInstanceDispose(unit) }
+
+    func start(_ tap: @escaping @Sendable (AVAudioPCMBuffer) -> Void) throws {
+        self.tap = tap
+        var callback = AURenderCallbackStruct(inputProc: { refCon, flags, timestamp, bus, frames, _ in
+            Unmanaged<DeviceInput>.fromOpaque(refCon).takeUnretainedValue()
+                .render(flags: flags, timestamp: timestamp, bus: bus, frames: frames)
+        }, inputProcRefCon: Unmanaged.passUnretained(self).toOpaque())
+        try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_SetInputCallback,
+            kAudioUnitScope_Global, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)))
+        try Self.check(AudioUnitInitialize(unit))
+        running = true
+        try Self.check(AudioOutputUnitStart(unit))
+    }
+
+    /// Returns once the device has stopped calling back.
+    func stop() {
+        guard running else { return }
+        running = false
+        AudioOutputUnitStop(unit)
+        AudioUnitUninitialize(unit)
+        if pending.frameLength > 0 { tap?(pending); pending.frameLength = 0 }
+        tap = nil
+    }
+
+    private func render(flags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
+                        timestamp: UnsafePointer<AudioTimeStamp>, bus: UInt32, frames: UInt32) -> OSStatus {
+        guard frames <= buffer.frameCapacity else { return kAudioUnitErr_TooManyFramesToProcess }
+        buffer.frameLength = frames
+        let channels = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+        for index in channels.indices { channels[index].mDataByteSize = frames * UInt32(MemoryLayout<Float>.size) }
+        let status = AudioUnitRender(unit, flags, timestamp, bus, frames, buffer.mutableAudioBufferList)
+        guard status == noErr, let source = buffer.floatChannelData, let target = pending.floatChannelData else { return status }
+        for channel in 0..<Int(format.channelCount) {
+            (target[channel] + Int(pending.frameLength)).update(from: source[channel], count: Int(frames))
+        }
+        pending.frameLength += frames
+        // The tap converts synchronously, so the pending buffer can be reused.
+        if pending.frameLength >= batchFrames { tap?(pending); pending.frameLength = 0 }
+        return status
+    }
+
+    private static func check(_ status: OSStatus) throws {
+        guard status == noErr else { throw AudioInputError.deviceSelectionFailed }
+    }
+}

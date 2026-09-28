@@ -17,8 +17,7 @@ local test workspace; it never automatically copies or pastes test results and
 does not change your normal dictation model.
 
 1. Choose **Upload audio** or **History**. History includes saved test recordings
-   and normal recording history. Audio is copied into the test workspace; samples
-   can be up to 60 seconds long.
+   and normal recording history. Audio is copied into the test workspace.
 2. Open **Settings** to choose a local WhisperKit model and enter your ElevenLabs
    API key. Both settings save automatically across restarts; the key is stored
    in macOS Keychain, separate from workspace files and reports. **Add model** can use the
@@ -71,13 +70,13 @@ rebuilt app still shows missing access, switch its permission off and on and reo
 Nami. Recording shortcuts and audio import cannot bypass this setup.
 
 The persistent sidebar contains **History**, **Settings**, **Permissions**, **Local
-model**, **About Nami**, and **Internal debugging** at the bottom. **Permissions** shows current Microphone, Input Monitoring,
+model**, **About Nami**, and **Internal debugging** at the bottom. Press **⌘1**–**⌘4** to switch
+between History, Settings, Permissions, and Local model. **Permissions** shows current Microphone, Input Monitoring,
 and Accessibility access. Use **Allow…** for missing access, or **Manage…** to open the
 corresponding macOS privacy pane and revoke or re-enable access. Status updates when
 you return to Nami. Revoking a required permission stops an active recording.
 
-1. Open **Settings** to choose a duration (5–60 seconds), or select manual stopping to stop
-   manually. All recordings have a 60-second maximum.
+1. Recordings have no time limit: they continue until you stop them.
 2. Leave English and the configured WhisperKit model selected. **Local model**
    contains the model folder, engine, and optional evaluation reading prompts.
 3. Click **Start recording** or use your shortcut. Nami opens the microphone immediately,
@@ -85,8 +84,8 @@ you return to Nami. Revoking a required permission stops an active recording.
    The model prepares automatically at launch once permissions are granted, and stays loaded
    while Nami is open. If you record before it is ready, audio is buffered and saved before
    waiting for transcription; you can still stop or cancel normally.
-4. Watch the timer and live microphone levels. Click **Stop & transcribe**
-   early if needed, or wait for the chosen duration. Escape cancels.
+4. Watch the timer and live microphone levels. Click **Stop & transcribe** or use your
+   shortcut when you're done. Escape cancels.
 5. The finished transcript is **copied to the clipboard automatically**. When
    recording with a shortcut from another app, Nami also **pastes at your cursor**
    after you allow Accessibility. You can **Listen** to the captured audio or use **Copy** again.
@@ -155,8 +154,7 @@ shortcuts are retained, but inactive while tap mode is enabled. Those recorder
 fields require a regular key with modifiers; they cannot capture modifier-only
 or double-tap gestures. Mode and key assignments persist in macOS app preferences.
 
-Turn off **Stop automatically** for manual stopping (the 60-second safety limit
-still applies). Background model preparation does not block recording shortcuts.
+Recording continues until you stop it with a shortcut. Background model preparation does not block recording shortcuts.
 Shortcuts do nothing while the microphone is opening, transcribing, or cancelling.
 Conventional shortcuts trigger once on release. Escape cancels when Nami is focused. Cancelled, failed, and empty
 transcriptions leave the clipboard unchanged. Successful recordings and audio
@@ -404,7 +402,7 @@ the live stop-to-final measurement; use file benchmarks for comparable timings.
 Existing audio and report files are never intentionally overwritten. Microphone
 access is requested only by `record`; macOS may attribute permission to the
 terminal that launched the tool. Capture errors stop the session rather than
-silently dropping audio. Recordings are limited to 60 seconds.
+silently dropping audio.
 
 If a transcript misses or invents words, collect a diagnostic recording:
 

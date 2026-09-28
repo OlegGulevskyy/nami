@@ -40,6 +40,16 @@ struct RecordingHistoryStore {
         return stored
     }
 
+    /// Removes the metadata first so a partial failure never leaves a listed
+    /// recording without its text; a leftover WAV is simply unreferenced.
+    func delete(_ id: UUID) throws {
+        for ext in ["json", "wav"] {
+            let url = directory.appendingPathComponent(id.uuidString + "." + ext)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
     func load() throws -> (runs: [RecordingRun], warnings: [String]) {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)

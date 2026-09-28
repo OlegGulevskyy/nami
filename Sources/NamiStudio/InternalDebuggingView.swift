@@ -291,7 +291,7 @@ struct InternalDebuggingView: View {
     private func importAudio() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.audio]; panel.allowsMultipleSelection = false
-        panel.message = "Choose audio up to 60 seconds long. Nami keeps a separate copy for testing."
+        panel.message = "Choose audio to test. Nami keeps a separate copy for testing."
         if panel.runModal() == .OK, !locked, let url = panel.url {
             lab.importAudio(url, language: session.settings.language)
         }

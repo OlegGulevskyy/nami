@@ -25,8 +25,7 @@ struct NamiApp: App {
             project = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Application Support/Nami", isDirectory: true)
         }
-        var clipboardWriter: (@MainActor (String) -> Bool)?
-        if args.contains("--snapshot") { clipboardWriter = { _ in true } }
+        let snapshot = args.contains("--snapshot")
         let previewPermissions = args.contains("--snapshot")
             ? StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
                                 accessibilityStatus: { false }, requestAccessibility: { false },
@@ -37,7 +36,9 @@ struct NamiApp: App {
             ? FileManager.default.temporaryDirectory.appendingPathComponent("nami-preview-" + UUID().uuidString)
             : nil
         let session = StudioSession(project: project, historyDirectory: previewHistory,
-                                    permissions: previewPermissions, clipboardWriter: clipboardWriter)
+                                    permissions: previewPermissions, pastePreparer: StudioSession.systemPastePreparer,
+                                    captureBuilder: StudioSession.systemCapture,
+                                    clipboardWriter: { snapshot || StudioSession.systemClipboardWriter($0) })
         _session = State(initialValue: session)
         session.updates = AppUpdates(disabled: args.contains("--snapshot"), isBusy: { [weak session] in
             session?.busyForUpdate ?? false
@@ -88,6 +89,7 @@ struct NamiApp: App {
                 permissions: StudioPermissions(microphoneStatus: { .notDetermined }, inputMonitoringStatus: { false },
                     accessibilityStatus: { false }, requestAccessibility: { false },
                     requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
+                pastePreparer: { { .targetUnavailable } }, captureBuilder: StudioSession.systemCapture,
                 clipboardWriter: { _ in true })
             try renderView(AnyView(StudioView(session: permissionSession, page: .constant(.history))),
                            size: NSSize(width: 760, height: 600), to: output.appendingPathComponent("permissions.png"))

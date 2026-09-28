@@ -31,7 +31,7 @@ public enum EngineError: Error, Equatable, Sendable, LocalizedError {
         switch self {
         case .notPrepared: "Prepare the engine before starting a session."
         case .invalidState: "The engine cannot perform this operation in its current state."
-        case .invalidAudio: "Audio must be finite, contiguous mono 16 kHz PCM, at most 60 seconds."
+        case .invalidAudio: "Audio must be finite, contiguous mono 16 kHz PCM."
         case .noAudio: "The session contains no audio."
         case .cancelled: "Transcription was cancelled."
         case .modelUnavailable(let message): "Model unavailable: \(message)"
@@ -79,8 +79,7 @@ public struct AudioSessionBuffer {
         guard sessionID == id, !finishing else { throw EngineError.invalidState }
         guard chunk.timestamp.isFinite,
               abs(chunk.timestamp - Double(samples.count) / AudioChunk.sampleRate) < 1 / AudioChunk.sampleRate,
-              chunk.samples.allSatisfy({ $0.isFinite && abs($0) <= 1 }),
-              samples.count + chunk.samples.count <= 60 * Int(AudioChunk.sampleRate)
+              chunk.samples.allSatisfy({ $0.isFinite && abs($0) <= 1 })
         else { throw EngineError.invalidAudio }
         samples.append(contentsOf: chunk.samples)
     }

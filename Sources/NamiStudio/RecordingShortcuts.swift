@@ -65,10 +65,7 @@ public struct RecordingShortcutSettings: View {
                 }
             }
             Section {
-                Toggle("Stop automatically", isOn: $session.settings.timed)
-                Text(session.settings.timed
-                     ? "Recording stops after \(Int(session.settings.duration)) seconds. You can also stop earlier with a shortcut."
-                     : "Stop when you're done using your shortcut. Recordings have a 60-second safety limit.")
+                Text("Recording continues until you stop it with your shortcut.")
                     .font(.callout).foregroundStyle(.secondary)
                 Text("Recording starts as soon as the microphone opens, even while the model warms up. Start and stop normally while it loads. Shortcuts are ignored while the microphone opens or a transcript is processing.")
                     .font(.callout).foregroundStyle(.secondary)

@@ -98,18 +98,6 @@ public struct StudioSettingsView: View {
                     } label: { Text(session.inputName).lineLimit(1).truncationMode(.middle).frame(maxWidth: 200) }
                         .preferenceMenu().accessibilityLabel("Microphone: \(session.inputName)")
                 }
-                row("Stop automatically") {
-                    Menu {
-                        Button("Manually · 60-second limit") { session.settings.timed = false }
-                        ForEach(Array(stride(from: 5, through: 60, by: 5)), id: \.self) { seconds in
-                            Button("After \(seconds) seconds") {
-                                session.settings.duration = Double(seconds); session.settings.timed = true
-                            }
-                        }
-                    } label: {
-                        Text(session.settings.timed ? "After \(Int(session.settings.duration)) seconds" : "Manually (up to 60 sec)")
-                    }.preferenceMenu().accessibilityLabel("Stop automatically")
-                }
             }.disabled(session.phase.busy)
         }
         section("Transcription") {

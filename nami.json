@@ -8,6 +8,7 @@
     "duration" : 60,
     "engine" : "whisperkit",
     "language" : "en",
+    "microphoneUID" : "AppleUSBAudioEngine:Elgato Systems:Elgato Wave:3:A011A43210DO70:2,1",
     "modelFolder" : "/Users/oleggulevskyy/Library/Application Support/Nami/Models/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB",
     "pasteWhenFinished" : true,
     "saveAudio" : true,

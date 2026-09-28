@@ -232,15 +232,16 @@ private func projectDirectory() throws -> URL {
     #expect(session.runs.isEmpty)
 }
 
-@Test @MainActor func frameLimitStopsAndSavedAudioSurvivesInferenceFailure() async throws {
+@Test @MainActor func savedAudioSurvivesInferenceFailure() async throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let engine = TestEngine(), capture = TestCapture(); engine.fail = true
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
-    session.settings.duration = 5
     session.settings.saveAudio = true
     session.startRecording()
     try await waitUntil { session.phase == .recording }
-    capture.emit(seconds: 5.1)
+    capture.emit(seconds: 5)
+    try await waitUntil { session.capturedSeconds == 5 }
+    session.stopRecording()
     try await waitUntil { !session.phase.busy }
     #expect(engine.sampleCount == 80_000)
     #expect(session.phase == .failed)
@@ -252,6 +253,21 @@ private func projectDirectory() throws -> URL {
     #expect(try AudioFile.read(#require(files.first)).count == 80_000)
 }
 
+@Test @MainActor func silentMicrophoneReportsMissingAudio() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+    session.settings.saveAudio = true
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    session.stopRecording()
+    try await waitUntil { !session.phase.busy }
+    #expect(session.phase == .failed)
+    #expect(session.errorMessage == AudioInputError.noAudioReceived.localizedDescription)
+    #expect(session.runs.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: project.appendingPathComponent("evaluation/audio").path))
+}
+
 @Test func settingsPreserveOtherProjectKeysAndResolveHome() throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let config = project.appendingPathComponent("nami.json")
@@ -259,9 +275,9 @@ private func projectDirectory() throws -> URL {
     var settings = try StudioSettings.load(project: project)
     #expect(settings.modelFolder == FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("My model").path)
     #expect(settings.vocabulary.isEmpty)
-    settings.duration = 25
+    settings.vocabulary = "Nami"
     try settings.save(project: project)
-    #expect(try StudioSettings.load(project: project).duration == 25)
+    #expect(try StudioSettings.load(project: project).vocabulary == "Nami")
     let json = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as? [String: Any]
     #expect(json?["otherSetting"] as? Int == 42)
 }
@@ -270,7 +286,7 @@ private func projectDirectory() throws -> URL {
     let root = try projectDirectory(); defer { try? FileManager.default.removeItem(at: root) }
     let project = root.appendingPathComponent("Application Support/Nami", isDirectory: true)
     #expect(!FileManager.default.fileExists(atPath: project.path))
-    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, inputDevicesProvider: { [] })
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { [] }, clipboardWriter: { _ in true })
     #expect(session.errorMessage == nil)
     session.settings.language = "fr"
     #expect(try StudioSettings.load(project: project).language == "fr")
@@ -280,19 +296,17 @@ private func projectDirectory() throws -> URL {
 @Test @MainActor func settingsSaveImmediatelyAndRestoreIntoNewSession() throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let microphones = [AudioInputDevice(id: "usb-mic-uid", name: "USB microphone")]
-    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, inputDevicesProvider: { microphones })
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { microphones }, clipboardWriter: { _ in true })
     session.settings.engine = "fake"
     session.settings.modelFolder = project.appendingPathComponent("model").path
     session.settings.language = "fr"
-    session.settings.duration = 35
-    session.settings.timed = false
     session.settings.saveAudio = true
     session.settings.audioDirectory = project.appendingPathComponent("recordings").path
     session.settings.microphoneUID = "usb-mic-uid"
     session.settings.vocabulary = "Nami, Oleg\nPostHog, Élodie, Київ"
 
     // No SwiftUI view or explicit save call: even quitting immediately must work.
-    let reopened = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, inputDevicesProvider: { microphones })
+    let reopened = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { microphones }, clipboardWriter: { _ in true })
     #expect(reopened.settings == session.settings)
     #expect(reopened.inputName == "USB microphone")
     #expect(!reopened.selectedMicrophoneUnavailable)
@@ -300,7 +314,7 @@ private func projectDirectory() throws -> URL {
 
     reopened.settings.microphoneUID = nil
     reopened.settings.vocabulary = ""
-    let followingDefault = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, inputDevicesProvider: { microphones })
+    let followingDefault = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { microphones }, clipboardWriter: { _ in true })
     #expect(followingDefault.settings.microphoneUID == nil)
     #expect(followingDefault.settings.language == "fr")
     #expect(followingDefault.settings.vocabulary.isEmpty)
@@ -310,7 +324,7 @@ private func projectDirectory() throws -> URL {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let engine = TestEngine(), capture = TestCapture()
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in Issue.record("Test must not copy"); return false })
     session.settings.engine = "fake"
     session.settings.copyWhenFinished = false
@@ -353,8 +367,6 @@ private func projectDirectory() throws -> URL {
     #expect(restored.vocabulary.isEmpty)
     #expect(restored.engine == "fake")
     #expect(restored.language == "fr")
-    #expect(restored.duration == 40)
-    #expect(!restored.timed)
     #expect(restored.saveAudio)
     #expect(restored.audioDirectory == project.appendingPathComponent("recordings").path)
 }
@@ -364,7 +376,7 @@ private func projectDirectory() throws -> URL {
     let engine = TestEngine(), capture = TestCapture()
     let devices = TestInputDevices()
     var requestedUID: String?
-    let first = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, inputDevicesProvider: { devices.available })
+    let first = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { devices.available }, clipboardWriter: { _ in true })
     first.settings.microphoneUID = "remembered-mic"
     let reopened = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine },
         captureBuilder: { requestedUID = $0; return capture },
@@ -387,11 +399,11 @@ private func projectDirectory() throws -> URL {
 
 @Test @MainActor func failedSettingsSaveReportsErrorWithoutOverwritingConfig() throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
-    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions())
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
     let config = project.appendingPathComponent("nami.json")
     let invalid = Data("invalid JSON".utf8)
     try invalid.write(to: config)
-    session.settings.duration = 30
+    session.settings.language = "de"
     #expect(session.errorMessage != nil)
     #expect(try Data(contentsOf: config) == invalid)
 }
@@ -427,17 +439,20 @@ private func projectDirectory() throws -> URL {
     #expect(session.status.contains("copied"))
 }
 
-@Test @MainActor func automaticStopCopiesFinalText() async throws {
+@Test @MainActor func recordingContinuesUntilStoppedPastOneMinute() async throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let engine = TestEngine(), capture = TestCapture()
     var copies: [String] = []
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
                                 clipboardWriter: { copies.append($0); return true })
-    session.settings.duration = 5
     session.startRecording()
     try await waitUntil { session.phase == .recording }
-    capture.emit(seconds: 5.1)
+    capture.emit(seconds: 90)
+    try await waitUntil { session.capturedSeconds == 90 }
+    #expect(session.phase == .recording)
+    session.stopRecording()
     try await waitUntil { !session.phase.busy }
+    #expect(engine.sampleCount == 90 * 16000)
     #expect(copies == [engine.transcript])
 }
 
@@ -536,35 +551,30 @@ private func projectDirectory() throws -> URL {
     #expect(try StudioSettings.load(project: project).pasteWhenFinished)
 }
 
-@Test @MainActor func manualAndAutomaticStopsCopyThenPasteExactlyOnce() async throws {
-    for automatic in [false, true] {
-        let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
-        let engine = TestEngine(), capture = TestCapture()
-        var events: [String] = []
-        let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: {
-            events.append("capture focus")
-            return { events.append("paste"); return .sent }
-        }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: {
-            #expect($0 == engine.transcript)
-            events.append("copy")
-            return true
-        })
-        session.settings.duration = 5
-        session.startRecording()
-        #expect(events == ["capture focus"])
-        try await waitUntil { session.phase == .recording }
-        capture.emit(seconds: automatic ? 5 : 1)
-        if !automatic {
-            try await waitUntil { session.capturedSeconds == 1 }
-            session.stopRecording()
-        }
-        session.stopRecording() // Duplicate stops must not schedule a second paste.
-        try await waitUntil { !session.phase.busy }
-        #expect(events == ["capture focus", "copy", "paste"])
-        #expect(session.status == TranscriptPasteResult.sent.status)
-        #expect(session.copyTranscript())
-        #expect(events == ["capture focus", "copy", "paste", "copy"])
-    }
+@Test @MainActor func stopsCopyThenPasteExactlyOnce() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    var events: [String] = []
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: {
+        events.append("capture focus")
+        return { events.append("paste"); return .sent }
+    }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: {
+        #expect($0 == engine.transcript)
+        events.append("copy")
+        return true
+    })
+    session.startRecording()
+    #expect(events == ["capture focus"])
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 1)
+    try await waitUntil { session.capturedSeconds == 1 }
+    session.stopRecording()
+    session.stopRecording() // Duplicate stops must not schedule a second paste.
+    try await waitUntil { !session.phase.busy }
+    #expect(events == ["capture focus", "copy", "paste"])
+    #expect(session.status == TranscriptPasteResult.sent.status)
+    #expect(session.copyTranscript())
+    #expect(events == ["capture focus", "copy", "paste", "copy"])
 }
 
 @Test @MainActor func disablingPasteKeepsAutomaticCopyAndPersists() async throws {
@@ -595,7 +605,7 @@ private func projectDirectory() throws -> URL {
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: {
         Issue.record("File imports must not prepare a paste")
         return { .sent }
-    }, engineBuilder: { _ in engine }, clipboardWriter: { copies.append($0); return true })
+    }, engineBuilder: { _ in engine }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { copies.append($0); return true })
     session.transcribeFile(url)
     try await waitUntil { !session.phase.busy }
     #expect(copies == [engine.transcript])
@@ -637,7 +647,7 @@ private func projectDirectory() throws -> URL {
                 requestInputMonitoring: { Issue.record("Recording must not request permission implicitly"); return false },
                 openSettings: { _ in Issue.record("Recording must not open settings implicitly"); return false })
             let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: permissions,
-                engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+                pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
             session.startRecording()
             session.toggleRecording()
             session.transcribeFile(project.appendingPathComponent("does-not-exist.wav"))
@@ -658,7 +668,7 @@ private func projectDirectory() throws -> URL {
     let permissions = StudioPermissions(microphoneStatus: { state.microphone }, inputMonitoringStatus: { true },
         requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: permissions,
-        engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+        pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
     session.startRecording()
     #expect(engine.prepares == 0)
     state.microphone = .authorized
@@ -683,7 +693,7 @@ private func projectDirectory() throws -> URL {
     let permissions = StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { state.inputMonitoring },
         requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: permissions,
-        engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+        pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
     session.settings.engine = "fake"
     session.prepareForRecording()
     try await waitUntil { engine.prepares == 1 }
@@ -700,7 +710,7 @@ private func projectDirectory() throws -> URL {
     let project = root.appendingPathComponent("checkout")
     let engine = TestEngine(), capture = TestCapture()
     let session = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(),
-        engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+        pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
     session.settings.copyWhenFinished = false
     #expect(!session.settings.saveAudio)
     for index in 0..<15 {
@@ -718,7 +728,7 @@ private func projectDirectory() throws -> URL {
     // Replacing the checkout/build cannot remove the independent history.
     try FileManager.default.removeItem(at: project)
     let reopened = StudioSession(project: root.appendingPathComponent("new-checkout"), historyDirectory: history,
-                                 permissions: allowedPermissions(), inputDevicesProvider: { [] })
+                                 permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { [] }, clipboardWriter: { _ in true })
     #expect(reopened.errorMessage == nil)
     #expect(reopened.runs.map(\.id) == ids)
     #expect(reopened.selectedRunID == ids.first)
@@ -741,14 +751,14 @@ private func projectDirectory() throws -> URL {
     try AudioFile.write(Array(repeating: 0, count: 1600), to: source)
     let engine = TestEngine()
     let session = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(),
-                                engineBuilder: { _ in engine }, clipboardWriter: { _ in true })
+                                pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
     session.transcribeFile(source)
     try await waitUntil { !session.phase.busy }
     #expect(session.errorMessage == nil)
     let run = try #require(session.selectedRun)
     #expect(run.savedURL != source)
     try FileManager.default.removeItem(at: source)
-    let reopened = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions())
+    let reopened = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
     let restored = try #require(reopened.selectedRun)
     #expect(restored.id == run.id)
     #expect(restored.transcript == engine.transcript)
@@ -763,7 +773,7 @@ private func projectDirectory() throws -> URL {
     engine.releaseFinish = false
     defer { engine.releaseFinish = true }
     let session = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(),
-        engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in Issue.record("Unfinished transcription must not copy"); return true })
     session.startRecording()
     try await waitUntil { session.phase == .recording }
@@ -771,7 +781,7 @@ private func projectDirectory() throws -> URL {
     try await waitUntil { session.capturedSeconds == 1 }
     session.stopRecording()
     try await waitUntil { engine.waitingForFinish }
-    let recovered = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions())
+    let recovered = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
     let pending = try #require(recovered.selectedRun)
     #expect(pending.outcome == .interrupted)
     #expect(pending.transcript.isEmpty)
@@ -789,7 +799,7 @@ private func projectDirectory() throws -> URL {
     let history = project.appendingPathComponent("history")
     let engine = TestEngine(), capture = TestCapture()
     let session = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(),
-        engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+        pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
     session.startRecording()
     try await waitUntil { session.phase == .recording }
     capture.emit(seconds: 0.2)
@@ -809,7 +819,7 @@ private func projectDirectory() throws -> URL {
     try AudioFile.write(Array(repeating: 0.1, count: 1600), to: source)
     let engine = TestEngine()
     let session = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(),
-                                engineBuilder: { _ in engine }, clipboardWriter: { _ in true })
+                                pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
     session.transcribeFile(source)
     try await waitUntil { !session.phase.busy }
     let run = try #require(session.selectedRun)
@@ -817,7 +827,7 @@ private func projectDirectory() throws -> URL {
     let invalid = Data("invalid JSON".utf8)
     try invalid.write(to: broken)
     try FileManager.default.removeItem(at: #require(run.savedURL))
-    let reopened = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions())
+    let reopened = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
     #expect(reopened.runs.count == 1)
     #expect(reopened.selectedRun?.transcript == engine.transcript)
     #expect(reopened.errorMessage?.contains("Could not load") == true)
@@ -859,7 +869,7 @@ private func projectDirectory() throws -> URL {
         let engine = TestEngine(), capture = TestCapture()
         engine.prepareDelay = .seconds(1)
         let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-            permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+            permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
             clipboardWriter: { _ in true })
         let start = ContinuousClock.now
         session.startRecording()
@@ -876,7 +886,7 @@ private func projectDirectory() throws -> URL {
     engine.releasePrepare = false
     defer { engine.releasePrepare = true }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in true })
     session.settings.engine = "fake"
     session.prepareForRecording()
@@ -888,7 +898,7 @@ private func projectDirectory() throws -> URL {
     engine.releasePrepare = true
     try await waitUntil { session.modelLoaded }
     session.settings.language = "fr"
-    session.settings.duration = 30
+    session.settings.vocabulary = "Nami"
     session.refreshPermissions()
     #expect(!session.modelPreparing && engine.prepares == 1)
     #expect(capture.starts == 0)
@@ -907,7 +917,7 @@ private func projectDirectory() throws -> URL {
     defer { engine.releasePrepare = true }
     var copies: [String] = []
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { copies.append($0); return true })
     session.settings.engine = "fake"
     session.prepareForRecording()
@@ -940,7 +950,7 @@ private func projectDirectory() throws -> URL {
     engine.releasePrepare = false
     defer { engine.releasePrepare = true }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in true })
     session.startRecording()
     try await waitUntil { session.phase == .recording }
@@ -971,7 +981,7 @@ private func projectDirectory() throws -> URL {
     engine.releasePrepare = false; engine.prepareFailure = true
     defer { engine.releasePrepare = true }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in true })
     session.settings.engine = "fake"
     session.prepareForRecording()
@@ -1005,7 +1015,7 @@ private func projectDirectory() throws -> URL {
     next.releasePrepare = false
     defer { old.releasePrepare = true; next.releasePrepare = true }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), engineBuilder: { $0.modelFolder == "next" ? next : old },
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { $0.modelFolder == "next" ? next : old },
         captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
     session.settings.engine = "fake"
     session.prepareForRecording()
@@ -1029,7 +1039,7 @@ private func projectDirectory() throws -> URL {
         requestMicrophone: { Issue.record("Warmup must not request microphone access"); return false },
         requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: permissions, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        permissions: permissions, pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in true })
     session.settings.engine = "fake"
     session.prepareForRecording()
@@ -1047,9 +1057,8 @@ private func projectDirectory() throws -> URL {
     engine.releasePrepare = false
     defer { engine.releasePrepare = true }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
         clipboardWriter: { _ in true })
-    session.settings.timed = false
     session.startRecording()
     try await waitUntil { session.phase == .recording }
     // Send more chunks than the capture stream can hold. It must be drained
@@ -1064,4 +1073,30 @@ private func projectDirectory() throws -> URL {
     try await waitUntil { session.phase == .idle }
     #expect(engine.sampleCount == 320000)
     #expect(session.runs.first?.audioSeconds == 20)
+}
+
+@Test @MainActor func deletingARunRemovesItsTranscriptAndAudio() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let history = project.appendingPathComponent("history")
+    let source = project.appendingPathComponent("original.wav")
+    try AudioFile.write(Array(repeating: 0, count: 1600), to: source)
+    let engine = TestEngine()
+    let session = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(),
+                                pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
+    session.transcribeFile(source)
+    try await waitUntil { !session.phase.busy }
+    session.transcribeFile(source)
+    try await waitUntil { !session.phase.busy && session.runs.count == 2 }
+    let deleted = try #require(session.selectedRun)
+    let kept = session.runs[1]
+    let audio = try #require(deleted.savedURL)
+    session.deleteRun(deleted.id)
+    #expect(session.errorMessage == nil)
+    #expect(session.runs.map(\.id) == [kept.id])
+    #expect(session.selectedRunID == kept.id)
+    #expect(!FileManager.default.fileExists(atPath: audio.path))
+    #expect(!FileManager.default.fileExists(atPath: history.appendingPathComponent(deleted.id.uuidString + ".json").path))
+    let reopened = StudioSession(project: project, historyDirectory: history, permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })
+    #expect(reopened.runs.map(\.id) == [kept.id])
+    #expect(reopened.errorMessage == nil)
 }
