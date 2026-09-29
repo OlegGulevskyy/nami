@@ -29,7 +29,7 @@ private func fixtureCloud() -> CloudTranscriber {
     lab.runCloudComparison()
     let deadline = ContinuousClock.now.advanced(by: .seconds(5))
     while lab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    #expect(!lab.isBusy)
+    try #require(!lab.isBusy)
     #expect(lab.workspace.results.count == 2)
     #expect(lab.workspace.results.first?.cloudResponse?.words?.count == 1)
     let report = DebugBenchmarkReport(workspace: lab.workspace, directory: directory)
@@ -122,7 +122,7 @@ private func fixtureCloud() -> CloudTranscriber {
     lab.cancel()
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while lab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    #expect(!lab.isBusy)
+    try #require(!lab.isBusy)
     #expect(lab.workspace.results.isEmpty)
 }
 
@@ -141,7 +141,7 @@ private func fixtureCloud() -> CloudTranscriber {
     lab.runCloudComparison()
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while lab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    #expect(!lab.isBusy)
+    try #require(!lab.isBusy)
     #expect(lab.workspace.results.count == 2)
     #expect(lab.workspace.results.first?.error?.contains("429") == true)
     #expect(lab.workspace.results.last?.transcript == "local result")
@@ -167,7 +167,7 @@ private func fixtureCloud() -> CloudTranscriber {
     #expect(lab.comparisonResults(localModelID: chosen.id).local == nil)
     let deadline = ContinuousClock.now.advanced(by: .seconds(5))
     while lab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    #expect(!lab.isBusy)
+    try #require(!lab.isBusy)
     #expect(built == [chosen.id])
     let pair = lab.comparisonResults(localModelID: chosen.id)
     #expect(pair.local?.transcript == "please deploy")

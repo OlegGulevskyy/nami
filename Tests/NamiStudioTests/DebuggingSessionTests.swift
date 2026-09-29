@@ -13,7 +13,7 @@ import NamiCore
 @MainActor private func waitForDebugging(_ lab: DebuggingSession) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(5))
     while lab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    #expect(!lab.isBusy)
+    try #require(!lab.isBusy)
 }
 
 private func debugDirectory() -> URL {

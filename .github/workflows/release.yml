@@ -45,7 +45,8 @@ jobs:
         if: steps.release.outputs.already_published != 'true'
         run: |
           python3 -m unittest discover -s Scripts -p 'test_*.py'
-          swift test
+          # Avoid MainActor contention exhausting integration-test deadlines.
+          swift test --no-parallel
           python3 Scripts/smoke.py
 
       - name: Build

@@ -13,7 +13,7 @@ private func cleanupTestDirectory() -> URL {
 @MainActor private func awaitCleanup(_ lab: CleanupLabSession) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while lab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    #expect(!lab.isBusy)
+    try #require(!lab.isBusy)
 }
 
 private actor RecordingCleanupProcessor: TextProcessor {

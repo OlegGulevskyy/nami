@@ -275,7 +275,8 @@ private func projectDirectory() throws -> URL {
             engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
             clipboardWriter: { copies.append($0); return true })
         session.settings.cleanupEngine = .apple
-        session.settings.cleanupTimeoutSeconds = 0.1
+        // Only the blocked-provider case is testing deadline enforcement.
+        session.settings.cleanupTimeoutSeconds = timedOut ? 0.1 : 10
         session.settings.cleanupEnabled = true
         session.startRecording()
         try await waitUntil { session.phase == .recording }
@@ -379,7 +380,7 @@ private func projectDirectory() throws -> URL {
 @MainActor private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    #expect(condition())
+    try #require(condition())
 }
 
 @Test @MainActor func stopPublishesTranscriptAndReusesPreparedModel() async throws {
