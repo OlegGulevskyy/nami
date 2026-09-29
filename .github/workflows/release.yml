@@ -41,6 +41,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 Scripts/github_release.py metadata
 
+      - name: Install Metal toolchain
+        if: steps.release.outputs.already_published != 'true'
+        # Xcode 27 builds mlx-swift's Metal shaders; the compiler ships separately.
+        run: xcodebuild -downloadComponent MetalToolchain
+
       - name: Test
         if: steps.release.outputs.already_published != 'true'
         run: |
