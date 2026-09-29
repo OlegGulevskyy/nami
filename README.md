@@ -7,12 +7,12 @@ Progress is in [TRACKER.md](TRACKER.md).
 Next focus: [transcript cleanup and personalization spec](SPEC-cleanup.md),
 with an [implementation plan](tasks/plan.md) and [task checklist](tasks/todo.md).
 These describe planned work; cleanup and learning are not implemented yet.
-The **Internal debugging** page already supports recording samples and comparing
+The **Playground** page already supports recording samples and comparing
 speech-recognition models entirely in the app.
 
-## Internal debugging
+## Playground
 
-Open **Internal debugging** at the very bottom of the sidebar. This is a separate
+Open **Playground** in the sidebar (**⌘2**). This is a separate
 local test workspace; it never automatically copies or pastes test results and
 does not change your normal dictation model.
 
@@ -60,7 +60,7 @@ After building once, double-click `.build/Nami.app` in Finder, or run
 
 On every launch, Nami checks **Microphone** and **Input Monitoring** access. If either
 is missing, a popup blurs and blocks the history pane until both are allowed. The
-sidebar stays available, including Settings and Permissions. Use
+sidebar stays available, including Settings and its Permissions section. Use
 **Allow microphone** to trigger the macOS prompt before any model loads. If access
 was denied, **Open Settings…** takes you to the microphone privacy settings.
 **Allow Input Monitoring…** requests shortcut access and opens its privacy settings
@@ -69,9 +69,12 @@ can click **Check again**. Follow any macOS prompt to quit and reopen the app. I
 rebuilt app still shows missing access, switch its permission off and on and reopen
 Nami. Recording shortcuts and audio import cannot bypass this setup.
 
-The persistent sidebar contains **History**, **Settings**, **Permissions**, **Local
-model**, **About Nami**, and **Internal debugging** at the bottom. Press **⌘1**–**⌘4** to switch
-between History, Settings, Permissions, and Local model. **Permissions** shows current Microphone, Input Monitoring,
+The sidebar contains **History**, **Playground**, **Settings**, **Shortcuts**, and
+**Models**, in that order, with an **About** icon at the bottom. Press **⌘1**–**⌘5**
+to open the matching page, or **⌘6** for About. **Permissions** lives inside **Settings**.
+The **Shortcuts** page contains all recording and pin-input shortcut controls, plus a
+reference for built-in app shortcuts. Click **Pin / unpin input** to assign or change
+its keys (default **⌃⌥P**). **Settings → Permissions** shows current Microphone, Input Monitoring,
 and Accessibility access. Use **Allow…** for missing access, or **Manage…** to open the
 corresponding macOS privacy pane and revoke or re-enable access. Status updates when
 you return to Nami. Revoking a required permission stops an active recording.
@@ -82,10 +85,12 @@ you return to Nami. Revoking a required permission stops an active recording.
 3. Click **Start recording** or use your shortcut. Nami opens the microphone immediately,
    independently of model loading. The **Listening** indicator confirms capture has started.
    The model prepares automatically at launch once permissions are granted, and stays loaded
-   while Nami is open. If you record before it is ready, audio is buffered and saved before
-   waiting for transcription; you can still stop or cancel normally.
+   while Nami is open. Transcription starts in the background after the first second of
+   audio, once the model is ready. If you record before it is ready, audio is buffered
+   and catches up after loading; you can still stop or cancel normally.
 4. Watch the timer and live microphone levels. Click **Stop & transcribe** or use your
-   shortcut when you're done. Escape cancels.
+   shortcut when you're done. Nami finishes the unconfirmed tail and runs optional text
+   cleanup before publishing the final transcript. Escape cancels.
 5. The finished transcript is **copied to the clipboard automatically**. When
    recording with a shortcut from another app, Nami also **pastes at your cursor**
    after you allow Accessibility. You can **Listen** to the captured audio or use **Copy** again.
@@ -147,15 +152,15 @@ text is ready (and copied/pasted, if enabled). It never takes keyboard focus and
 disappears after completion, failure, or cancellation. Keep Nami running to use
 the global shortcuts.
 
-Open **Nami → Settings… (⌘,)** or **Settings** in the sidebar, then click the pencil
-beside **Start / stop recording**. Use **History** in the sidebar or **Escape** to
+Open **Shortcuts** in the sidebar (**⌘4**), or click the shortcut beside the
+recording button in History. Use **History** in the sidebar or **Escape** to
 return to recording history. Click **Allow Input Monitoring…**, enable **Nami** in **System Settings →
 Privacy & Security → Input Monitoring**, and reopen Nami if macOS requests it.
 The status changes to **Ready in any app while Nami is running** when the
 listener is active. The listener is passive: it does not consume input or read
 or retain typed characters. Secure Input can prevent macOS from delivering events.
 
-To use conventional shortcuts instead, turn off **Use ⌥⌘ taps**. The existing
+To use conventional shortcuts instead, turn off **Use Option–Command taps**. The existing
 configurable toggle (initially Control–Option–Space) and separate Start/Stop
 shortcuts are retained, but inactive while tap mode is enabled. Those recorder
 fields require a regular key with modifiers; they cannot capture modifier-only
@@ -179,6 +184,20 @@ the real model without opening a microphone or touching the clipboard:
 NAMI_TEST_MODEL_FOLDER="/path/to/model" NAMI_TEST_AUDIO_FILE="/path/to/fixture.wav" \
   swift test --filter realModelStartupCapturesBeforeLoadAndReusesWarmModel
 ```
+
+To compare batch transcription with live processing, replay saved audio at recording
+speed. This test uses no microphone or clipboard. The optional JSON report includes
+transcripts, so keep it private. For multiple fixtures, separate paths with newlines.
+
+```sh
+NAMI_TEST_MODEL_FOLDER="/path/to/model" \
+NAMI_TEST_STREAM_AUDIO_FILES="/path/to/fixture.wav" \
+NAMI_TEST_STREAM_REPORT="/tmp/nami-streaming-replay.json" \
+  swift test -c release --filter streamingReplayMeasuresStopLatencyAgainstBatch
+```
+
+The report measures warm batch decode versus time from the last replayed audio buffer
+to the final live transcript. It excludes history writes, text cleanup, and pasting.
 
 **Automatic paste:** click **Allow Accessibility…** in Nami or **Settings**,
 then enable **Nami** in **System Settings → Privacy & Security → Accessibility**.
@@ -254,7 +273,7 @@ settings unless you pass `--project /path/to/nami` in the scheme's arguments.
 ### Prepare an app to share
 
 Nami includes Sparkle updates: **Nami → Check for Updates…** and update controls
-in **Settings** and **About Nami**. The update feed uses the public
+in **Settings** and **About**. The update feed uses the public
 `OlegGulevskyy/nami` GitHub releases repository. After the one-time Actions secret
 setup, publish a `vX.Y.Z` release on GitHub to build and distribute it automatically.
 Release notes are optional. See [Updates and releases](docs/updates.md).
@@ -313,7 +332,7 @@ microphone permission. Do not run it as a routine rebuild step.
 ## Build and test
 
 The native interface follows the recording-history and settings references. General,
-Local model, and About Nami share the paper-and-sage styling. **Launch at login** uses
+Models, and About share the paper-and-sage styling. **Launch at login** uses
 macOS Login Items and only changes when you toggle it in the packaged app.
 
 For repeatable visual checks without microphone capture or clipboard changes:
@@ -493,14 +512,19 @@ does not create a success report.
 - `NamiAudio`: AVAudioEngine capture and AVAudioConverter normalization into
   timestamped mono 16 kHz Float32 chunks. Adapters own any further conversion.
 - `NamiWhisperKit`: the only target importing the provider SDK; configuration,
-  factory, model setup and the batch adapter live here.
+  factory, model setup and the batch/live adapter live here.
 - `NamiBench`: CLI orchestration, report generation, and explicit recording.
 - `NamiStudio`: observable recording controller, persistent settings and SwiftUI
   recording/evaluation interface using the same engine contract.
 - `NamiApp`: macOS application entry point and window lifecycle.
 
-The adapter buffers until finish and emits no partials. Incremental decoding,
-menu bar UI and focus-safe insertion remain later work. Global recording
+Live capture decodes in the background at approximately one-second audio intervals,
+with one inference at a time. It confirms earlier timestamped segments while keeping
+the last two segments and the newest second of audio available for revision. Stop
+cancels outdated inference before decoding the remaining audio; in-flight or completed
+work that already includes all audio is reused. Partial text stays internal, with clipboard/paste only after final
+transcription and optional cleanup. File imports, retries, and CLI benchmarks keep
+the batch path. Global recording
 shortcuts use the pinned KeyboardShortcuts 3.1.0 package. The studio controller guards cancellation and late results; the future
 insertion path still needs focus and session-ID checks before pasting.
 

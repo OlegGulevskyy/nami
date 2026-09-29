@@ -45,7 +45,7 @@ The saved response includes transcript, detected language and word timestamps.
 
 ## In the app
 
-1. Open **Internal debugging**, select a saved sample or use **From History…**.
+1. Open **Playground**, select a saved sample or use **From History…**.
 2. Choose your local model in **Settings**. The selection saves with the workspace
    and is restored when Nami restarts.
 3. Enter an ElevenLabs API key in **Settings**. Changes save immediately to macOS

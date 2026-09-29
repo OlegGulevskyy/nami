@@ -5,18 +5,18 @@ import SwiftUI
 
 public struct StudioSettingsView: View {
     public enum Page: String, CaseIterable {
-        case general = "General", permissions = "Permissions", model = "Models", about = "About Nami"
+        case general = "General", shortcuts = "Shortcuts", model = "Models", about = "About"
     }
 
     @Bindable private var session: StudioSession
+    @Bindable private var modifierShortcut: ModifierRecordingShortcut
     private let page: Page
-    @State private var editingShortcut = false
-    @State private var shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
     @State private var loginStatus = SMAppService.mainApp.status
     @State private var loginError: String?
 
     public init(session: StudioSession, page: Page = .general) {
         self.session = session
+        self.modifierShortcut = session.modifierShortcut
         self.page = page
     }
 
@@ -31,7 +31,7 @@ public struct StudioSettingsView: View {
                     VStack(alignment: .leading, spacing: 40) {
                         switch page {
                         case .general: general
-                        case .permissions: permissions
+                        case .shortcuts: shortcuts
                         case .model: EmptyView()
                         case .about: EmptyView()
                         }
@@ -53,35 +53,12 @@ public struct StudioSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             session.refreshInput(); session.modifierShortcut.refresh()
             loginStatus = SMAppService.mainApp.status
-            shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
-        }
-        .sheet(isPresented: $editingShortcut, onDismiss: {
-            shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
-        }) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Recording shortcut").font(.headline)
-                    Spacer()
-                    Button("Done") { editingShortcut = false }.keyboardShortcut(.defaultAction)
-                }.padding(20)
-                RecordingShortcutSettings(session: session)
-            }.background(StudioStyle.paper)
         }
     }
 
     @ViewBuilder private var general: some View {
         Text("Changes save automatically.").font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
         section("Recording") {
-            row("Start / stop recording", subtitle: session.modifierShortcut.enabled
-                ? "Tap twice to start. Tap once to finish."
-                : "Press once to start. Press again to finish.") {
-                Button { editingShortcut = true } label: {
-                    HStack(spacing: 10) {
-                        Text(session.modifierShortcut.enabled ? "⌥ ⌘" : shortcut?.description ?? "Set shortcut")
-                        Image(systemName: "pencil").font(.system(size: 12))
-                    }.preferenceControl()
-                }.buttonStyle(.plain).accessibilityLabel("Edit recording shortcut")
-            }
             Group {
                 row("Microphone") {
                     Menu {
@@ -156,6 +133,11 @@ public struct StudioSettingsView: View {
                 }
             }
         }.disabled(session.phase.busy)
+        section("Permissions") {
+            VStack(alignment: .leading, spacing: 20) {
+                permissions
+            }
+        }
         section("History") {
             row("Recording history", subtitle: "All recordings and transcripts stay on this Mac. Nothing is automatically deleted.") {
                 Button("Show folder") { NSWorkspace.shared.open(session.historyDirectory) }
@@ -216,6 +198,76 @@ public struct StudioSettingsView: View {
             }
             updateSettings
         }
+    }
+
+    @ViewBuilder private var shortcuts: some View {
+        Text("All your shortcuts in one place. Click a shortcut field and press your new keys. Changes save automatically.")
+            .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
+            .fixedSize(horizontal: false, vertical: true)
+        section("Pin input") {
+            shortcutRow("Pin / unpin input", name: .pinDestination)
+            shortcutHelp("Focus a text field in any app, then press this shortcut to pin it for your next transcript. Press again to unpin. The pin is used once and works with either recording shortcut mode. Requires Accessibility.")
+            shortcutHelp("If the app cannot accept text in the background, Nami copies the transcript instead.")
+        }.disabled(session.phase.busy)
+        section("Recording") {
+            row("Use Option–Command taps", subtitle: "Press and release ⌥⌘ together. No letter or Space key needed.") {
+                Toggle("Use Option–Command taps", isOn: $modifierShortcut.enabled)
+                    .labelsHidden().toggleStyle(StudioToggleStyle())
+            }
+            if session.modifierShortcut.enabled {
+                row("Start recording") { StudioKeycap(text: "⌥⌘ twice") }
+                row("Stop & transcribe") { StudioKeycap(text: "⌥⌘ once") }
+                shortcutHelp("Tap twice within half a second to start. Tap once while recording to finish.")
+                Label(session.modifierShortcut.message,
+                      systemImage: session.modifierShortcut.isListening ? "checkmark.circle" : "exclamationmark.circle")
+                    .font(.system(size: 12)).padding(.vertical, 8)
+                if !session.modifierShortcut.isListening {
+                    Button("Allow Input Monitoring…", action: session.modifierShortcut.requestPermission)
+                        .buttonStyle(.plain).preferenceControl()
+                    shortcutHelp("Enable Nami in System Settings → Privacy & Security → Input Monitoring. If already enabled, switch it off and back on, then quit and reopen Nami.")
+                }
+            }
+            StudioStyle.divider.padding(.vertical, 12)
+            Group {
+                shortcutRow("Start / stop recording", name: .toggleRecording)
+                shortcutRow("Start recording", name: .startRecording)
+                shortcutRow("Stop & transcribe", name: .stopRecording)
+            }.disabled(session.modifierShortcut.enabled)
+            shortcutHelp(session.modifierShortcut.enabled
+                ? "These key shortcuts are inactive while Option–Command taps are on. Turn taps off to edit and use them. Your saved shortcuts are kept."
+                : "Use modifiers plus a regular key. Start / stop toggles recording; the separate start and stop shortcuts are optional.")
+        }.disabled(session.phase.busy)
+        section("In Nami") {
+            shortcutHelp("Built-in shortcuts for the Nami window. These cannot be changed here.")
+            ForEach(StudioView.Page.allCases, id: \.self) { destination in
+                row("Show \(destination.rawValue)") { StudioKeycap(text: "⌘\(destination.shortcutKey)") }
+            }
+            row("Open Settings") { StudioKeycap(text: "⌘,") }
+            row("Search transcripts", subtitle: "In History") { StudioKeycap(text: "⌘F") }
+            row("Start / stop recording", subtitle: "In History") { StudioKeycap(text: "⌘R") }
+            row("Import audio", subtitle: "In History") { StudioKeycap(text: "⌘O") }
+            row("Go back / cancel", subtitle: "Return to History, close search, or cancel the current task.") {
+                StudioKeycap(text: "Esc")
+            }
+        }
+    }
+
+    private func shortcutRow(_ title: String, name: KeyboardShortcuts.Name) -> some View {
+        row(title) {
+            KeyboardShortcuts.Recorder(for: name)
+                .shortcutValidation { shortcut in
+                    if RecordingShortcuts.assignable.contains(where: { $0 != name && KeyboardShortcuts.getShortcut(for: $0) == shortcut }) {
+                        return .disallow(reason: "This shortcut is already assigned to another Nami action. Choose different keys, or clear the other shortcut first.")
+                    }
+                    return .allow
+                }
+                .accessibilityLabel(title)
+        }
+    }
+
+    private func shortcutHelp(_ text: String) -> some View {
+        Text(text).font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+            .fixedSize(horizontal: false, vertical: true).lineSpacing(2).padding(.vertical, 6)
     }
 
     @ViewBuilder private var permissions: some View {
@@ -345,12 +397,7 @@ public struct StudioSettingsView: View {
     }
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 12) {
-                Text(title).font(.system(size: 15, weight: .semibold))
-                    .accessibilityAddTraits(.isHeader)
-                StudioStyle.divider
-            }
-            .padding(.bottom, 10)
+            StudioSectionHeader(title: title).padding(.bottom, 10)
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }

@@ -53,9 +53,8 @@ struct ModelsView: View {
                     HStack { ProgressView().controlSize(.small); Text("Removing model…") }
                 }
                 VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Text("Transcription").font(.system(size: 19, weight: .semibold))
-                        Spacer()
+                    HStack(spacing: 12) {
+                        StudioSectionHeader(title: "Transcription")
                         Button("Add folder…", action: chooseFolder).disabled(locked)
                     }
                     DisclosureGroup("Browse more transcription models", isExpanded: $browse) {
@@ -73,9 +72,8 @@ struct ModelsView: View {
                         }) { model in whisperRow(model) }
                     }
                 }
-                StudioStyle.divider
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Text cleanup").font(.system(size: 19, weight: .semibold))
+                    StudioSectionHeader(title: "Text cleanup")
                     ForEach(QwenModel.allCases) { model in qwenRow(model) }
                     HStack {
                         VStack(alignment: .leading, spacing: 7) {

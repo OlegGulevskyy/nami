@@ -78,7 +78,7 @@ separate draft-build-publish flow.
 ## In-app behavior
 
 Nami uses Sparkle 2.10.0. It checks daily by default; users can disable automatic
-checks or use **Nami → Check for Updates…**, Settings, or About Nami. Users choose
+checks or use **Nami → Check for Updates…**, Settings, or About. Users choose
 when to download and install. System profiling is disabled. The app verifies
 both the feed and archive signatures before installing.
 

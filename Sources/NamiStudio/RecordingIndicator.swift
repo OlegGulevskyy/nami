@@ -6,22 +6,26 @@ import SwiftUI
 @MainActor public final class RecordingIndicatorController {
     private let session: StudioSession
     private(set) var panel: NSPanel?
+    private var pointerTracking: Task<Void, Never>?
 
     public init(session: StudioSession) {
         self.session = session
-        observePhase()
+        observeState()
     }
 
-    private func observePhase() {
-        let phase = withObservationTracking {
-            session.phase
+    private func observeState() {
+        let visible = withObservationTracking {
+            session.phase.busy || session.pinnedDestination != nil || session.pinNotice != nil
         } onChange: { [weak self] in
-            // Observation fires before the write. Read the committed phase on
+            // Observation fires before the write. Read the committed state on
             // the next main-actor turn, then subscribe for the next transition.
-            Task { @MainActor [weak self] in self?.observePhase() }
+            Task { @MainActor [weak self] in self?.observeState() }
         }
-        if phase.busy { show() }
-        else { panel?.orderOut(nil) }
+        if visible { show() }
+        else {
+            pointerTracking?.cancel(); pointerTracking = nil
+            panel?.orderOut(nil)
+        }
     }
 
     private func show() {
@@ -44,10 +48,24 @@ import SwiftUI
             self.panel = panel
         }
         guard let panel, !panel.isVisible else { return }
-        // Use the pointer's display for this run; visibleFrame clears the Dock.
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        if let screen { panel.setFrameOrigin(Self.origin(in: screen.visibleFrame)) }
+        followPointer()
         panel.orderFrontRegardless()
+        // Polling needs no extra permission, unlike a global mouse monitor.
+        pointerTracking = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(200))
+                self?.followPointer()
+            }
+        }
+    }
+
+    /// Keeps the indicator on the display with the pointer; visibleFrame clears the Dock.
+    private func followPointer() {
+        let pointer = NSEvent.mouseLocation
+        guard let panel, let screen = NSScreen.screens.first(where: { NSMouseInRect(pointer, $0.frame, false) }) ?? NSScreen.main
+        else { return }
+        let origin = Self.origin(in: screen.visibleFrame)
+        if panel.frame.origin != origin { panel.setFrameOrigin(origin) }
     }
 
     static func origin(in visibleFrame: NSRect) -> NSPoint {
@@ -65,7 +83,8 @@ private struct SessionRecordingIndicator: View {
     var session: StudioSession
     var body: some View {
         RecordingIndicatorView(phase: session.phase, levels: session.meterHistory, elapsed: session.elapsed,
-                               cleaning: session.isCleaningUp)
+                               cleaning: session.isCleaningUp, destination: session.pinnedDestination?.appName,
+                               notice: session.pinNotice)
     }
 }
 
@@ -76,19 +95,37 @@ public struct RecordingIndicatorView: View {
     let levels: [Double]
     let elapsed: Double
     let cleaning: Bool
+    let destination: String?
+    let notice: String?
 
-    public init(phase: StudioPhase, levels: [Double] = [], elapsed: Double = 0, cleaning: Bool = false) {
+    public init(phase: StudioPhase, levels: [Double] = [], elapsed: Double = 0, cleaning: Bool = false,
+                destination: String? = nil, notice: String? = nil) {
         self.phase = phase
         self.levels = levels
         self.elapsed = elapsed
         self.cleaning = cleaning
+        self.destination = destination
+        self.notice = notice
     }
 
     public var body: some View {
         HStack(spacing: 12) {
-            if phase == .recording {
+            if let notice {
+                Image(systemName: "pin").foregroundStyle(StudioStyle.selection)
+                Text(notice).font(.system(size: 12, weight: .medium)).lineLimit(2).minimumScaleFactor(0.85)
+                Spacer(minLength: 0)
+            } else if !phase.busy, let destination {
+                Image(systemName: "pin.fill").foregroundStyle(StudioStyle.selection)
+                Text("Next transcript → \(destination)").font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 0)
+            } else if phase == .recording {
                 Circle().fill(StudioStyle.selection).frame(width: 6, height: 6)
-                Text("Listening").font(.system(size: 13, weight: .medium))
+                if let destination {
+                    Label(destination, systemImage: "pin.fill").font(.system(size: 13, weight: .medium))
+                        .lineLimit(1).truncationMode(.tail)
+                } else {
+                    Text("Listening").font(.system(size: 13, weight: .medium))
+                }
                 StudioWaveform(levels: levels, color: StudioStyle.selection)
                     .frame(width: 66, height: 26).accessibilityHidden(true)
                 Spacer(minLength: 0)
@@ -111,11 +148,13 @@ public struct RecordingIndicatorView: View {
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         .preferredColorScheme(.dark)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(phase == .recording ? "Nami is recording" : "Nami: \(status)")
+        .accessibilityLabel(notice.map { "Nami: \($0)" }
+            ?? (phase == .recording ? "Nami is recording" + (destination.map { " for \($0)" } ?? "") : "Nami: \(status)"))
     }
 
     private var status: String {
-        switch phase {
+        if !phase.busy, let destination { return "Next transcript goes to \(destination)" }
+        return switch phase {
         case .preparing: "Getting ready…"
         case .cancelling: "Cancelling…"
         default: cleaning ? "Cleaning up…" : "Transcribing…"

@@ -7,27 +7,28 @@ import UniformTypeIdentifiers
 public struct StudioView: View {
     @Bindable var session: StudioSession
     public enum Page: String, CaseIterable {
-        case history = "History", settings = "Settings", permissions = "Permissions", model = "Models", about = "About Nami", debugging = "Internal debugging"
+        case history = "History", debugging = "Playground", settings = "Settings", shortcuts = "Shortcuts", model = "Models", about = "About"
 
         var symbol: String {
             switch self {
             case .history: "clock.arrow.circlepath"
             case .settings: "slider.horizontal.3"
-            case .permissions: "lock.shield"
+            case .shortcuts: "keyboard"
             case .model: "cpu"
             case .about: "info.circle"
-            case .debugging: "ladybug"
+            case .debugging: "flask"
             }
         }
 
         /// Pressed with Command to switch pages from anywhere in the window.
-        var shortcutKey: Character? {
+        var shortcutKey: Character {
             switch self {
             case .history: "1"
-            case .settings: "2"
-            case .permissions: "3"
-            case .model: "4"
-            case .about, .debugging: nil
+            case .debugging: "2"
+            case .settings: "3"
+            case .shortcuts: "4"
+            case .model: "5"
+            case .about: "6"
             }
         }
 
@@ -35,7 +36,7 @@ public struct StudioView: View {
             switch self {
             case .history, .debugging: nil
             case .settings: .general
-            case .permissions: .permissions
+            case .shortcuts: .shortcuts
             case .model: .model
             case .about: .about
             }
@@ -46,6 +47,10 @@ public struct StudioView: View {
     @State private var searchVisible = false
     @State private var query = ""
     @State private var shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
+    @AppStorage("studio.sidebar.width") private var savedSidebarWidth = StudioSidebarLayout.defaultWidth
+    @AppStorage("studio.sidebar.collapsed") private var savedSidebarCollapsed = false
+    @State private var draggedSidebarWidth: Double?
+    @State private var resizingSidebar = false
     @FocusState private var searchFocused: Bool
 
     public init(session: StudioSession, page: Binding<Page>) {
@@ -54,9 +59,46 @@ public struct StudioView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Rectangle().fill(StudioStyle.line).frame(width: 1)
+        GeometryReader { geometry in
+            studio(availableWidth: geometry.size.width)
+        }
+        .frame(minWidth: 760, minHeight: 600).preferredColorScheme(.light)
+        .background(StudioWindowChrome()).ignoresSafeArea(.container, edges: .top)
+    }
+
+    private func studio(availableWidth: Double) -> some View {
+        let sidebarWidth = sidebarCollapsed ? StudioSidebarLayout.collapsedWidth
+            : StudioSidebarLayout.expandedWidth(draggedSidebarWidth ?? savedSidebarWidth, availableWidth: availableWidth)
+        return HStack(spacing: 0) {
+            sidebar.frame(width: sidebarWidth)
+                .overlay(alignment: .trailing) {
+                    Rectangle().fill(StudioStyle.line).frame(width: 1)
+                }
+                .overlay(alignment: .trailing) {
+                    StudioSidebarResizeHandle(width: sidebarWidth, onResize: { width in
+                        resizingSidebar = true
+                        draggedSidebarWidth = width
+                    }, onEnd: {
+                        finishSidebarResize(availableWidth: availableWidth)
+                    })
+                    .frame(width: 8)
+                    .background(resizingSidebar ? StudioStyle.green.opacity(0.12) : .clear)
+                    .help("Drag to resize the sidebar. Drag left to collapse to icons.")
+                    .accessibilityElement()
+                    .accessibilityLabel("Sidebar width")
+                    .accessibilityValue(sidebarCollapsed ? "Collapsed" : "\(Int(sidebarWidth)) points")
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment:
+                            if sidebarCollapsed { savedSidebarCollapsed = false }
+                            else { savedSidebarWidth = StudioSidebarLayout.expandedWidth(sidebarWidth + 20, availableWidth: availableWidth) }
+                        case .decrement:
+                            if sidebarWidth <= StudioSidebarLayout.minimumWidth { savedSidebarCollapsed = true }
+                            else { savedSidebarWidth = sidebarWidth - 20 }
+                        @unknown default: break
+                        }
+                    }
+                }
             VStack(spacing: 0) {
                 header
                 StudioStyle.divider
@@ -85,8 +127,6 @@ public struct StudioView: View {
         }
         .font(.system(size: 16)).foregroundStyle(StudioStyle.ink)
         .background(StudioStyle.paper).tint(StudioStyle.green)
-        .frame(minWidth: 760, minHeight: 600).preferredColorScheme(.light)
-        .background(StudioWindowChrome()).ignoresSafeArea(.container, edges: .top)
         .task {
             recheckPermissions()
             // Keep the gate current even when System Settings stays in front.
@@ -153,48 +193,76 @@ public struct StudioView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("nami")
-                .font(.system(size: 20, weight: .semibold, design: .rounded)).tracking(-0.4)
-                .padding(.horizontal, 14).padding(.bottom, 26)
-            navigationItem(.history)
-            StudioStyle.divider.padding(.horizontal, 14).padding(.vertical, 12)
-            navigationItem(.settings)
-            navigationItem(.permissions)
-            navigationItem(.model)
-            Spacer()
+            HStack(spacing: 0) {
+                if !sidebarCollapsed {
+                    Text("nami")
+                        .font(.system(size: 20, weight: .semibold, design: .rounded)).tracking(-0.4)
+                        .padding(.leading, 12)
+                    Spacer(minLength: 0)
+                }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { savedSidebarCollapsed.toggle() }
+                } label: {
+                    Image(systemName: sidebarCollapsed ? "chevron.right" : "chevron.left")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(StudioStyle.quiet)
+                        .frame(width: 40, height: 40).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+                .accessibilityLabel(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
+            }
+            .padding(.bottom, 14)
+            ForEach(Page.allCases.filter { $0 != .about }, id: \.self) { navigationItem($0) }
+            Spacer(minLength: 12)
             navigationItem(.about)
-            StudioStyle.divider.padding(.horizontal, 14).padding(.vertical, 8)
-            navigationItem(.debugging)
         }
         .padding(.horizontal, 12).padding(.top, 64).padding(.bottom, 20)
-        .frame(width: 184).frame(maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(StudioStyle.sidebar)
     }
 
-    @ViewBuilder private func navigationItem(_ item: Page) -> some View {
-        let button = Button { page = item } label: {
-            HStack(spacing: item == .debugging ? 8 : 10) {
+    private var sidebarCollapsed: Bool {
+        if let draggedSidebarWidth { return draggedSidebarWidth < StudioSidebarLayout.collapseThreshold }
+        return savedSidebarCollapsed
+    }
+
+    private func finishSidebarResize(availableWidth: Double) {
+        if let draggedSidebarWidth {
+            savedSidebarCollapsed = sidebarCollapsed
+            if !savedSidebarCollapsed {
+                savedSidebarWidth = StudioSidebarLayout.expandedWidth(draggedSidebarWidth, availableWidth: availableWidth)
+            }
+        }
+        draggedSidebarWidth = nil
+        resizingSidebar = false
+    }
+
+    private func navigationItem(_ item: Page) -> some View {
+        let iconOnly = sidebarCollapsed || item == .about
+        return Button { page = item } label: {
+            HStack(spacing: 10) {
                 Image(systemName: item.symbol).font(.system(size: 16)).frame(width: 20)
-                Text(item.rawValue).font(.system(size: item == .debugging ? 12 : 14, weight: page == item ? .medium : .regular))
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
-                if let key = item.shortcutKey {
-                    Text(verbatim: "⌘\(key)").font(.system(size: 11).monospacedDigit())
+                if !iconOnly {
+                    Text(item.rawValue).font(.system(size: 14, weight: .medium))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text(verbatim: "⌘\(item.shortcutKey)").font(.system(size: 11).monospacedDigit())
                         .foregroundStyle(StudioStyle.quiet.opacity(0.8))
                         .accessibilityHidden(true)
                 }
             }
             .foregroundStyle(page == item ? StudioStyle.green : StudioStyle.quiet)
-            .padding(.horizontal, 12).frame(height: 40)
+            .padding(.horizontal, iconOnly ? 0 : 12)
+            .frame(maxWidth: item == .about ? nil : .infinity)
+            .frame(width: item == .about ? (sidebarCollapsed ? 40 : 44) : nil, height: 40)
             .background(page == item ? StudioStyle.selection : .clear, in: RoundedRectangle(cornerRadius: 8))
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain).accessibilityAddTraits(page == item ? .isSelected : [])
-        if let key = item.shortcutKey {
-            button.keyboardShortcut(KeyEquivalent(key), modifiers: .command)
-        } else {
-            button
-        }
+        .accessibilityLabel(item.rawValue)
+        .help("\(item.rawValue) (⌘\(String(item.shortcutKey)))")
+        .keyboardShortcut(KeyEquivalent(item.shortcutKey), modifiers: .command)
     }
 
     private var header: some View {
@@ -317,7 +385,7 @@ public struct StudioView: View {
                     .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
                     .disabled(session.phase == .cancelling)
             } else {
-                Button { page = .settings } label: {
+                Button { page = .shortcuts } label: {
                     HStack(spacing: 5) {
                         if session.modifierShortcut.enabled {
                             StudioKeycap(text: "⌥ ⌘")
@@ -378,51 +446,18 @@ private struct RecordingHistoryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text(run.date.formatted(date: .omitted, time: .shortened))
-                Text("·")
-                Text("\(Int(run.audioSeconds.rounded())) sec")
-                if run.engine == "fake" { Text("·  Demo").foregroundStyle(.orange) }
-                Spacer()
-                if session.playing && session.selectedRunID == run.id || hovered || needsAttention {
-                    Button {
-                        if session.selectedRunID != run.id { session.stopPlayback(); session.selectedRunID = run.id }
-                        session.togglePlayback()
-                    } label: {
-                        Image(systemName: session.playing && session.selectedRunID == run.id ? "stop.circle" : "play.circle")
-                    }
-                    .buttonStyle(.plain).disabled(session.phase.busy)
-                    .accessibilityLabel(session.playing && session.selectedRunID == run.id ? "Stop playback" : "Listen to recording")
-                    .help("Listen to recording")
+            HStack(spacing: 24) {
+                HStack(spacing: 10) {
+                    Text(run.date.formatted(date: .omitted, time: .shortened))
+                    Text("·")
+                    Text("\(Int(run.audioSeconds.rounded())) sec")
+                    if run.engine == "fake" { Text("·  Demo").foregroundStyle(.orange) }
                 }
-                if session.retranscribingRunID == run.id {
-                    ProgressView().controlSize(.small)
-                        .accessibilityLabel("Re-transcribing recording")
-                        .help("Re-transcribing recording…")
-                } else if hovered || confirmDelete {
-                    Button { session.retranscribeRun(run.id) } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(.plain)
-                        .disabled(session.busyForUpdate)
-                        .accessibilityLabel("Re-transcribe recording")
-                        .help("Re-transcribe using current settings")
-                }
-                if hovered || confirmDelete {
-                    Button { confirmDelete = true } label: { Image(systemName: "trash") }
-                        .buttonStyle(.plain)
-                        .disabled(session.retranscribingRunID == run.id)
-                        .accessibilityLabel("Delete recording")
-                        .help("Delete recording")
-                }
-                Button {
-                    if session.selectedRunID != run.id { session.stopPlayback() }
-                    session.selectedRunID = run.id
-                    copied = session.copyTranscript()
-                } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
-                    .buttonStyle(.plain).frame(width: 24, height: 24)
-                    .disabled(!run.hasTranscript)
-                    .help(copied ? "Copied" : "Copy transcript")
-                    .accessibilityLabel(copied ? "Transcript copied" : "Copy transcript")
-            }.font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
+                historyActions
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
+            .frame(minHeight: 24)
             RecordingHistoryText(run: run, transcriptFont: session.settings.transcriptFont.font)
                 .padding(.bottom, needsAttention ? 2 : 16)
             if let result = run.cleanupResult {
@@ -478,6 +513,55 @@ private struct RecordingHistoryRow: View {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(2))
             if !Task.isCancelled { copied = false }
+        }
+    }
+
+    private var historyActions: some View {
+        HStack(spacing: 10) {
+            if session.playing && session.selectedRunID == run.id || hovered || needsAttention {
+                Button {
+                    if session.selectedRunID != run.id { session.stopPlayback(); session.selectedRunID = run.id }
+                    session.togglePlayback()
+                } label: {
+                    Image(systemName: session.playing && session.selectedRunID == run.id ? "stop.circle" : "play.circle")
+                }
+                .buttonStyle(.plain).frame(width: 24, height: 24)
+                .disabled(session.phase.busy)
+                .accessibilityLabel(session.playing && session.selectedRunID == run.id ? "Stop playback" : "Listen to recording")
+                .help("Listen to recording")
+            }
+            if session.retranscribingRunID == run.id {
+                ProgressView().controlSize(.small).frame(width: 24, height: 24)
+                    .accessibilityLabel("Re-transcribing recording")
+                    .help("Re-transcribing recording…")
+            } else if hovered || confirmDelete {
+                Button { session.retranscribeRun(run.id) } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain).frame(width: 24, height: 24)
+                    .disabled(session.busyForUpdate)
+                    .accessibilityLabel("Re-transcribe recording")
+                    .help("Re-transcribe using current settings")
+            }
+            if hovered || confirmDelete {
+                Button {
+                    if session.selectedRunID != run.id { session.stopPlayback() }
+                    session.selectedRunID = run.id
+                    copied = session.copyTranscript()
+                } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
+                    .buttonStyle(.plain).frame(width: 24, height: 24)
+                    .disabled(!run.hasTranscript)
+                    .help(copied ? "Copied" : "Copy transcript")
+                    .accessibilityLabel(copied ? "Transcript copied" : "Copy transcript")
+
+                Rectangle().fill(StudioStyle.line)
+                    .frame(width: 1, height: 14)
+                    .padding(.horizontal, 4)
+                    .accessibilityHidden(true)
+                Button { confirmDelete = true } label: { Image(systemName: "trash") }
+                    .buttonStyle(.plain).frame(width: 24, height: 24)
+                    .disabled(session.retranscribingRunID == run.id)
+                    .accessibilityLabel("Delete recording")
+                    .help("Delete recording")
+            }
         }
     }
 }

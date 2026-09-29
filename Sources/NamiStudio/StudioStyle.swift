@@ -13,6 +13,18 @@ enum StudioStyle {
     static var divider: some View { Rectangle().fill(line).frame(height: 1) }
 }
 
+struct StudioSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title).font(.system(size: 15, weight: .semibold))
+                .fixedSize().accessibilityAddTraits(.isHeader)
+            StudioStyle.divider
+        }
+    }
+}
+
 struct StudioIconButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

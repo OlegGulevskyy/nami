@@ -52,6 +52,7 @@ import NamiAudio
     var receivedSamples: [Float] = []
     var receivedVocabularies: [String] = []
     var receivedLanguages: [String?] = []
+    var liveStarts = 0
     func prepare() async throws {
         prepares += 1
         // The uncooperative fake must also ignore cancellation during its first
@@ -77,6 +78,10 @@ import NamiAudio
         #expect(chunk.timestamp == Double(sampleCount) / AudioChunk.sampleRate)
         sampleCount += chunk.samples.count
         receivedSamples += chunk.samples
+    }
+    func startLive(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
+        liveStarts += 1
+        try await start(sessionID: sessionID, language: language, vocabulary: vocabulary, onPartial: onPartial)
     }
     func finish(sessionID: UUID) async throws -> String {
         waitingForFinish = true
@@ -290,6 +295,55 @@ private func projectDirectory() throws -> URL {
         try await Task.sleep(for: .milliseconds(30))
         #expect(copies == [engine.transcript] && pastes == 1)
     }
+}
+
+@Test @MainActor func pinnedDestinationTakesOneLiveTranscriptInsteadOfTheStartTarget() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    var copies: [String] = [], pastes = 0, inserted: [String] = [], pins = 0
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { pastes += 1; return .sent } },
+        destinationPinner: {
+            pins += 1
+            return .pinned(.init(appName: "T3 Code") { inserted.append($0); return .inserted })
+        },
+        engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { copies.append($0); return true })
+    func record() async throws {
+        session.startRecording()
+        try await waitUntil { session.phase == .recording }
+        capture.emit(seconds: 0.1)
+        try await waitUntil { session.capturedSeconds >= 0.1 }
+        session.stopRecording()
+        try await waitUntil { !session.phase.busy }
+    }
+    // Pinning during a recording redirects that recording.
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    session.togglePinnedDestination()
+    try await waitUntil { session.pinnedDestination != nil }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds >= 0.1 }
+    session.stopRecording()
+    try await waitUntil { !session.phase.busy }
+    #expect(inserted == [engine.transcript] && pastes == 0 && copies == [engine.transcript])
+    #expect(session.pinnedDestination == nil)
+    #expect(session.status == TranscriptInsertResult.inserted.status(app: "T3 Code", copied: true))
+    // The pin is used once; the next recording pastes where it started.
+    try await record()
+    #expect(inserted.count == 1 && pastes == 1)
+    // A pin also works with automatic copy and paste off, and can be cleared.
+    session.settings.copyWhenFinished = false
+    session.togglePinnedDestination()
+    try await waitUntil { session.pinnedDestination != nil }
+    try await record()
+    #expect(inserted.count == 2 && copies.count == 2 && pastes == 1)
+    session.togglePinnedDestination()
+    try await waitUntil { session.pinnedDestination != nil }
+    session.togglePinnedDestination()
+    #expect(session.pinnedDestination == nil && session.pinNotice == "Unpinned T3 Code.")
+    try await record()
+    #expect(inserted.count == 2 && pins == 3)
 }
 
 @Test @MainActor func cancellingLiveCleanupKeepsRawHistoryAndNeverPastesLateOutput() async throws {
@@ -1145,6 +1199,33 @@ private func projectDirectory() throws -> URL {
     #expect(engine.receivedSamples == first + last)
     #expect(session.runs.first?.audioSeconds == 0.3)
     #expect(copies == [engine.transcript])
+}
+
+@Test @MainActor func liveAudioReachesEngineBeforeStopIncludingColdStartBacklog() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    engine.releasePrepare = false
+    defer { engine.releasePrepare = true }
+    var copied: [String] = []
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { .targetUnavailable } }, engineBuilder: { _ in engine },
+        captureBuilder: { _ in capture }, clipboardWriter: { copied.append($0); return true })
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.2)
+    try await waitUntil { session.capturedSeconds == 0.2 }
+    #expect(engine.sampleCount == 0)
+    engine.releasePrepare = true
+    try await waitUntil { engine.sampleCount == 3200 }
+    #expect(session.phase == .recording && engine.liveStarts == 1)
+    #expect(!engine.waitingForFinish && copied.isEmpty)
+    capture.emit(seconds: 0.1)
+    try await waitUntil { engine.sampleCount == 4800 }
+    #expect(session.phase == .recording)
+    session.stopRecording()
+    try await waitUntil { session.phase == .idle }
+    #expect(engine.sampleCount == 4800 && copied == [engine.transcript])
+    #expect(try AudioFile.read(#require(session.runs.first?.savedURL)).count == 4800)
 }
 
 @Test @MainActor func cancellingModelWaitKeepsAudioAndNextCaptureCanStartDuringSameLoad() async throws {

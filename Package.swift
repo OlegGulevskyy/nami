@@ -39,6 +39,7 @@ let package = Package(
         .executableTarget(name: "NamiApp", dependencies: ["NamiStudio"]),
         .testTarget(name: "NamiCoreTests", dependencies: ["NamiCore", "NamiAudio"]),
         .testTarget(name: "NamiStudioTests", dependencies: ["NamiStudio"]),
+        .testTarget(name: "NamiWhisperKitTests", dependencies: ["NamiWhisperKit", "NamiCore"]),
         .testTarget(name: "NamiAppleCleanupTests", dependencies: ["NamiAppleCleanup", "NamiCore"]),
         .testTarget(name: "NamiMLXCleanupTests", dependencies: ["NamiMLXCleanup", "NamiCore"]),
     ]

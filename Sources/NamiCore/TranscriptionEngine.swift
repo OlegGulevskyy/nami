@@ -49,12 +49,18 @@ public protocol TranscriptionEngine: AnyObject {
     func prepare() async throws
     /// Vocabulary provides optional recognition hints, snapshotted for this session.
     func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws
+    /// Live capture may decode during append. File imports keep the batch start path.
+    func startLive(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws
     func append(_ chunk: AudioChunk, sessionID: UUID) async throws
     func finish(sessionID: UUID) async throws -> String
     func cancel(sessionID: UUID) async
 }
 
 public extension TranscriptionEngine {
+    func startLive(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
+        try await start(sessionID: sessionID, language: language, vocabulary: vocabulary, onPartial: onPartial)
+    }
+
     func start(sessionID: UUID, language: String?, onPartial: (@Sendable (String) -> Void)?) async throws {
         try await start(sessionID: sessionID, language: language, vocabulary: "", onPartial: onPartial)
     }

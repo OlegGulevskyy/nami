@@ -37,6 +37,7 @@ struct NamiApp: App {
             : nil
         let session = StudioSession(project: project, historyDirectory: previewHistory,
                                     permissions: previewPermissions, pastePreparer: StudioSession.systemPastePreparer,
+                                    destinationPinner: StudioSession.systemDestinationPinner,
                                     captureBuilder: StudioSession.systemCapture,
                                     clipboardWriter: { snapshot || StudioSession.systemClipboardWriter($0) })
         _session = State(initialValue: session)
@@ -104,6 +105,10 @@ struct NamiApp: App {
             try renderView(AnyView(StudioView(session: permissionSession, page: .constant(.history))),
                            size: NSSize(width: 760, height: 600), to: output.appendingPathComponent("permissions.png"))
             try render(to: output.appendingPathComponent("shortcuts.png"), shortcuts: true)
+            try render(to: output.appendingPathComponent("shortcuts-compact.png"), shortcuts: true,
+                       size: NSSize(width: 760, height: 600))
+            try render(to: output.appendingPathComponent("shortcuts-full.png"), shortcuts: true,
+                       size: NSSize(width: 1080, height: 1600))
             for phase in [StudioPhase.preparing, .recording, .processing] {
                 let levels = (0..<20).map { 0.15 + abs(sin(Double($0) * 0.65)) * 0.75 }
                 try renderView(AnyView(RecordingIndicatorView(phase: phase, levels: levels, elapsed: 12)),
@@ -112,11 +117,11 @@ struct NamiApp: App {
             }
             try render(to: output.appendingPathComponent("local-model.png"), settingsPage: .model)
             try render(to: output.appendingPathComponent("about.png"), settingsPage: .about)
-            try render(to: output.appendingPathComponent("permissions-page.png"), settingsPage: .permissions)
-            try render(to: output.appendingPathComponent("permissions-compact.png"), settingsPage: .permissions,
+            try render(to: output.appendingPathComponent("settings.png"), settingsPage: .general)
+            try render(to: output.appendingPathComponent("settings-compact.png"), settingsPage: .general,
                        size: NSSize(width: 760, height: 600))
-            try renderView(AnyView(StudioView(session: permissionSession, page: .constant(.permissions))),
-                           size: NSSize(width: 760, height: 600), to: output.appendingPathComponent("permissions-missing.png"))
+            try renderView(AnyView(StudioView(session: permissionSession, page: .constant(.settings))),
+                           size: NSSize(width: 1080, height: 2200), to: output.appendingPathComponent("settings-permissions-missing.png"))
             if let frame = NSApplication.shared.windows.first(where: { $0.title.contains("Recording history") })?.contentView?.superview {
                 try cacheView(frame, to: output.appendingPathComponent("window.png"))
             }
@@ -130,11 +135,11 @@ struct NamiApp: App {
                                size: NSSize(width: 760, height: 850), to: output.appendingPathComponent("debugging-compact.png"))
                 try render(to: output.appendingPathComponent("history.png"))
                 try render(to: output.appendingPathComponent("history-compact.png"), size: NSSize(width: 760, height: 600))
-                try render(to: output.appendingPathComponent("settings-compact.png"), shortcuts: true, size: NSSize(width: 800, height: 720))
+                try render(to: output.appendingPathComponent("settings-compact.png"), settingsPage: .general, size: NSSize(width: 800, height: 720))
                 try render(to: output.appendingPathComponent("settings-wide.png"), settingsPage: .general,
                            size: NSSize(width: 1440, height: 1000))
                 try render(to: output.appendingPathComponent("settings-full.png"), settingsPage: .general,
-                           size: NSSize(width: 1080, height: 1600))
+                           size: NSSize(width: 1080, height: 2400))
                 session.loadDesignPreviewHistory(includeIssues: true)
                 try render(to: output.appendingPathComponent("history-issues.png"), size: NSSize(width: 1080, height: 1200))
                 try render(to: output.appendingPathComponent("history-issues-compact.png"), size: NSSize(width: 760, height: 850))
@@ -167,10 +172,10 @@ struct NamiApp: App {
         let size = requestedSize ?? (isSettings ? NSSize(width: 880, height: 830) : NSSize(width: 1080, height: 850))
         let selectedPage: StudioView.Page = switch settingsPage {
         case .general: .settings
-        case .permissions: .permissions
+        case .shortcuts: .shortcuts
         case .model: .model
         case .about: .about
-        case nil: shortcuts ? .settings : .history
+        case nil: shortcuts ? .shortcuts : .history
         }
         let content = AnyView(StudioView(session: session, page: .constant(selectedPage)))
         try renderView(content, size: size, to: url)

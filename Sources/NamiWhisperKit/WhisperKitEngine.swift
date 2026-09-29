@@ -28,8 +28,7 @@ public enum EngineFactory {
 public final class WhisperKitEngine: TranscriptionEngine {
     public static let sdkVersion = "1.1.0"
     public static let defaultModel = "openai_whisper-large-v3-v20240930_626MB"
-    // Baseline is deliberately batch-only. Measure before adding speculative decoding.
-    public let capabilities = EngineCapabilities(incrementalProcessing: false, requiresNetwork: false)
+    public let capabilities = EngineCapabilities(incrementalProcessing: true, requiresNetwork: false)
     private let runtime: WhisperRuntime
     private var prepared = false
     private var buffer = AudioSessionBuffer()
@@ -37,6 +36,8 @@ public final class WhisperKitEngine: TranscriptionEngine {
     private var vocabulary = ""
     private var inference: Task<String, Error>?
     private var inferenceSession: UUID?
+    private var streaming: StreamingTranscription?
+    private var streamingID: UUID?
 
     public init(modelFolder: String) { runtime = WhisperRuntime(modelFolder: modelFolder) }
 
@@ -77,18 +78,46 @@ public final class WhisperKitEngine: TranscriptionEngine {
     public func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
         guard prepared else { throw EngineError.notPrepared }
         // Do not reuse the underlying pipeline until cancelled inference has unwound.
-        guard inference == nil else { throw EngineError.invalidState }
+        guard inference == nil, inferenceSession == nil, streaming == nil else { throw EngineError.invalidState }
         try buffer.start(sessionID)
         self.language = language
         self.vocabulary = vocabulary
     }
 
+    public func startLive(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
+        try await start(sessionID: sessionID, language: language, vocabulary: vocabulary, onPartial: onPartial)
+        streamingID = sessionID
+        streaming = StreamingTranscription(onPartial: onPartial) { [runtime] audio in
+            try await runtime.decode(audio, language: language, vocabulary: vocabulary)
+        }
+    }
+
     public func append(_ chunk: NamiCore.AudioChunk, sessionID: UUID) async throws {
+        if let streaming {
+            guard streamingID == sessionID else { throw EngineError.invalidState }
+            try streaming.append(chunk)
+            return
+        }
         try buffer.append(chunk, sessionID: sessionID)
     }
 
     public func finish(sessionID: UUID) async throws -> String {
         guard prepared else { throw EngineError.notPrepared }
+        if let streaming {
+            guard streamingID == sessionID, inferenceSession == nil else { throw EngineError.invalidState }
+            inferenceSession = sessionID
+            defer {
+                if streamingID == sessionID { self.streaming = nil; streamingID = nil }
+                inferenceSession = nil
+                buffer.cancel(sessionID)
+            }
+            do { return try await streaming.finish() }
+            catch {
+                await streaming.cancel()
+                if error is CancellationError || error as? EngineError == .cancelled { throw EngineError.cancelled }
+                throw EngineError.transcriptionFailed(error.localizedDescription)
+            }
+        }
         let audio = try buffer.beginFinish(sessionID)
         let work = Task { [runtime, language, vocabulary] in
             try await runtime.transcribe(audio, language: language, vocabulary: vocabulary)
@@ -114,6 +143,10 @@ public final class WhisperKitEngine: TranscriptionEngine {
 
     public func cancel(sessionID: UUID) async {
         buffer.cancel(sessionID)
+        if streamingID == sessionID, let streaming {
+            await streaming.cancel()
+            if streamingID == sessionID { self.streaming = nil; streamingID = nil }
+        }
         if inferenceSession == sessionID { inference?.cancel() }
     }
 }
@@ -140,6 +173,10 @@ private actor WhisperRuntime {
     }
 
     func transcribe(_ audio: [Float], language: String?, vocabulary: String) async throws -> String {
+        try await decode(audio, language: language, vocabulary: vocabulary).text
+    }
+
+    func decode(_ audio: [Float], language: String?, vocabulary: String) async throws -> DecodedAudio {
         guard let pipeline else { throw EngineError.notPrepared }
         // Keep segment timestamps for long-form seeking; skipSpecialTokens still
         // returns plain text. Disabling timestamps can end prompted windows early.
@@ -171,6 +208,10 @@ private actor WhisperRuntime {
         }
         let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)
         try Task.checkCancellation()
-        return results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return DecodedAudio(
+            text: results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines),
+            segments: results.flatMap(\.segments).map {
+                DecodedSegment(start: Double($0.start), end: Double($0.end), text: $0.text)
+            })
     }
 }

@@ -91,6 +91,9 @@ public final class StudioSession {
     public var selectedPromptID = ""
     public private(set) var prompts: [ReadingPrompt] = []
     public private(set) var playing = false
+    /// Used by the next finished recording only, from whichever app is in front.
+    public private(set) var pinnedDestination: PinnedTranscriptDestination?
+    public private(set) var pinNotice: String?
     public let debugging: DebuggingSession
     var cleanupService: CleanupService { debugging.cleanupLab.service }
 
@@ -100,6 +103,9 @@ public final class StudioSession {
     @ObservationIgnored private let inputDevicesProvider: @MainActor () -> [AudioInputDevice]
     @ObservationIgnored private let clipboardWriter: @MainActor (String) -> Bool
     @ObservationIgnored private let pastePreparer: @MainActor () -> PreparedTranscriptPaste
+    @ObservationIgnored private let destinationPinner: @MainActor () async -> TranscriptPinAttempt
+    @ObservationIgnored private var pinning: Task<Void, Never>?
+    @ObservationIgnored private var pinNoticeTask: Task<Void, Never>?
     @ObservationIgnored private var engine: (any TranscriptionEngine)?
     @ObservationIgnored private var engineKey = ""
     @ObservationIgnored private var preparation: EnginePreparation?
@@ -122,6 +128,7 @@ public final class StudioSession {
                 // microphone and overwrite the clipboard. Tests must inject fakes so a
                 // background test run can never disturb someone using the Mac.
                 pastePreparer: @escaping @MainActor () -> PreparedTranscriptPaste,
+                destinationPinner: @escaping @MainActor () async -> TranscriptPinAttempt = { .failed("Pinning is unavailable.") },
                 engineBuilder: (@MainActor (StudioSettings) throws -> any TranscriptionEngine)? = nil,
                 cleanupProcessors: [CleanupEngine: any TextProcessor] = [:],
                 modelDirectory: URL? = nil,
@@ -138,6 +145,7 @@ public final class StudioSession {
                 : .keychain(account: debuggingDirectory.standardizedFileURL.path))
         self.permissions = permissions ?? StudioPermissions()
         self.pastePreparer = pastePreparer
+        self.destinationPinner = destinationPinner
         self.engineBuilder = engineBuilder ?? { settings in
             var config = EngineConfiguration()
             guard let backend = EngineConfiguration.Backend(rawValue: settings.engine) else {
@@ -173,6 +181,7 @@ public final class StudioSession {
 
     /// Live integrations for the app only; tests must never pass these.
     public static func systemPastePreparer() -> PreparedTranscriptPaste { TranscriptPaster().prepare() }
+    public static func systemDestinationPinner() async -> TranscriptPinAttempt { await TranscriptPaster().pin() }
     public static func systemCapture(deviceUID: String?) -> any AudioCapturing { MicrophoneCapture(deviceUID: deviceUID) }
     public static func systemClipboardWriter(_ text: String) -> Bool {
         NSPasteboard.general.clearContents()
@@ -269,6 +278,9 @@ public final class StudioSession {
             var samples: [Float] = []
             var stats = AudioStatistics()
             var rawText: String?
+            let liveAudio = AsyncThrowingStream<AudioChunk, Error>.makeStream()
+            var feeding: Task<Void, Error>?
+            defer { liveAudio.continuation.finish(); feeding?.cancel() }
             do {
                 try self.check(id)
                 self.refreshPermissions()
@@ -287,6 +299,18 @@ public final class StudioSession {
                 // Capture must never wait for the model. Drain the stream into
                 // our recording buffer while preparation runs separately.
                 let preparation = try self.preparationFor(options, retryFailure: true)
+                let feed = Task {
+                    let engine = try await preparation.value()
+                    try self.check(id)
+                    try await engine.startLive(sessionID: id, language: options.language == "auto" ? nil : options.language,
+                                               vocabulary: options.vocabulary, onPartial: nil)
+                    for try await chunk in liveAudio.stream {
+                        try self.check(id)
+                        try await engine.append(chunk, sessionID: id)
+                    }
+                    try self.check(id)
+                }
+                feeding = feed
                 self.ticker = Task { [weak self] in
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(50))
@@ -300,7 +324,9 @@ public final class StudioSession {
                         self.firstAudioSeconds = Self.seconds(since: requestedAt)
                         Self.startupLog.info("First audio received after \(self.firstAudioSeconds!, privacy: .public) seconds")
                     }
+                    let timestamp = Double(samples.count) / AudioChunk.sampleRate
                     samples += chunk.samples
+                    liveAudio.continuation.yield(AudioChunk(samples: chunk.samples, timestamp: timestamp))
                     stats.append(chunk.samples)
                     var instant = AudioStatistics(); instant.append(chunk.samples)
                     self.level = max(0, min(1, (instant.rmsDBFS + 60) / 60))
@@ -309,6 +335,7 @@ public final class StudioSession {
                     self.averageDB = stats.rmsDBFS
                 }
                 self.ticker?.cancel()
+                liveAudio.continuation.finish()
                 capture.stop()
                 self.capture = nil
                 try self.check(id)
@@ -323,25 +350,24 @@ public final class StudioSession {
                                  input: self.inputName, options: options, prompt: prompt, outcome: .interrupted)
                 self.saveExtraAudioIfRequested(samples, options: options, id: id)
                 if !self.modelLoaded { self.status = "Waiting for the model. Your audio is kept." }
-                let engine = try await preparation.value()
+                try await withTaskCancellationHandler {
+                    try await feed.value
+                } onCancel: { feed.cancel() }
+                let engine = preparation.engine
                 try self.check(id)
                 self.refreshPermissions()
                 try self.check(id)
                 self.status = "Turning your audio into text…"
-                try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language,
-                                       vocabulary: options.vocabulary, onPartial: nil)
-                for offset in stride(from: 0, to: samples.count, by: 1600) {
-                    try self.check(id)
-                    try await engine.append(AudioChunk(samples: Array(samples[offset..<min(samples.count, offset + 1600)]),
-                        timestamp: Double(offset) / AudioChunk.sampleRate), sessionID: id)
-                }
                 let text = try await engine.finish(sessionID: id)
                 try self.check(id)
                 rawText = text
                 try await self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
                               latency: Self.seconds(since: stop), input: self.inputName,
-                              options: options, prompt: prompt, paste: paste)
+                              options: options, prompt: prompt, paste: paste, allowsPin: true)
             } catch {
+                liveAudio.continuation.finish()
+                feeding?.cancel()
+                _ = await feeding?.result
                 self.keepUnfinished(id: id, date: date, samples: samples, statistics: stats,
                                     input: self.inputName, options: options, prompt: prompt, error: error, rawText: rawText)
                 await self.failed(error, id: id)
@@ -439,6 +465,42 @@ public final class StudioSession {
         case .idle, .failed: startRecording()
         case .recording: stopRecording()
         case .preparing, .processing, .cancelling: break
+        }
+    }
+
+    /// Pins the focused field for the next transcript, or clears an existing pin.
+    /// Works before or during a recording; the paste target captured at start is skipped.
+    public func togglePinnedDestination() {
+        if let pinned = pinnedDestination {
+            pinnedDestination = nil
+            showPinNotice("Unpinned \(pinned.appName).")
+            return
+        }
+        guard pinning == nil else { return }
+        pinning = Task { [weak self] in
+            guard let self else { return }
+            let attempt = await self.destinationPinner()
+            self.pinning = nil
+            switch attempt {
+            case .pinned(let destination):
+                self.pinnedDestination = destination
+                self.pinNoticeTask?.cancel()
+                self.pinNotice = nil
+                if !self.phase.busy { self.status = "Your next transcript goes to \(destination.appName)." }
+            case .failed(let message):
+                self.showPinNotice(message)
+            }
+        }
+    }
+
+    private func showPinNotice(_ message: String) {
+        pinNoticeTask?.cancel()
+        pinNotice = message
+        if !phase.busy { status = message }
+        pinNoticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self?.pinNotice = nil
         }
     }
 
@@ -598,7 +660,8 @@ public final class StudioSession {
 
     private func complete(id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
                           latency: Double, input: String, options: StudioSettings, prompt: String,
-                          paste: PreparedTranscriptPaste? = nil, replacing previous: RecordingRun? = nil) async throws {
+                          paste: PreparedTranscriptPaste? = nil, allowsPin: Bool = false,
+                          replacing previous: RecordingRun? = nil) async throws {
         let started = ContinuousClock.now
         let original = text
         var text = text
@@ -641,6 +704,11 @@ public final class StudioSession {
         selectedRunID = id
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             status = "No speech recognized. Listen back to check the recording."
+        } else if allowsPin, let destination = pinnedDestination {
+            // A pin is an explicit request, so it applies even with automatic paste off.
+            pinnedDestination = nil
+            let copied = options.copyWhenFinished && copyToClipboard(text)
+            status = await destination.insert(text).status(app: destination.appName, copied: copied)
         } else {
             if options.copyWhenFinished {
                 if copyToClipboard(text) {

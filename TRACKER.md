@@ -72,14 +72,27 @@ Fill after running the experiment; do not infer measurements.
 - WhisperKit pinned to 1.1.0; provisional model is the compressed multilingual
   `openai_whisper-large-v3-v20240930_626MB`. Hardware meets platform requirements;
   no performance claim or backend acceptance decision yet.
-- Initial adapter is batch-only and reports that capability honestly. If warm
-  latency is unsuitable, investigate incremental decoding before choosing a
-  different local backend. The user authorized a recording studio to make
-  evaluation easier before backend selection; full dictation remains later work.
+- Live dictation now processes audio while recording, retaining the last two
+  timestamped segments for revision and flushing the remainder on Stop. File
+  imports, retries, and CLI benchmarks retain batch decoding. Real-model replay
+  measurements distinguish post-stop inference time from cleanup and publication.
 - User speech recordings and verified references are needed for the benchmark.
   Draft prompts and fake-engine results are not recognition measurements.
 
 ## Implementation evidence
+
+- Live transcription (2026-09-29): microphone audio feeds the warmed engine during
+  capture; one background worker coalesces chunks, preserves two provisional segments,
+  and cancels stale inference at Stop. Cold starts keep their full audio backlog.
+  The full package suite passed; 12 streaming scheduler tests cover final-tail audio,
+  confirmation boundaries, cancellation, slow inference, reuse, and error recovery.
+  Release-mode, real-time replay with the configured large-v3-turbo model measured
+  9.26s audio at 1.29s batch / 1.23s live post-stop, and 39.98s audio at 3.38s batch /
+  1.35s live post-stop. These are two local samples, not percentile measurements;
+  cleanup, history writes, and paste are excluded. The short transcript matched
+  batch exactly; the long transcript had small wording/punctuation differences.
+  Accuracy against human-verified references remains to be measured. Use the opt-in
+  `streamingReplayMeasuresStopLatencyAgainstBatch` test to repeat with local audio.
 
 - Internal debugging UI simplification: removed introductory copy, repetitive
   helper labels, idle status, and duplicate sample information. Models collapse
