@@ -145,7 +145,7 @@ private struct PreviewCleanupProcessor: TextProcessor {
     let studio = StudioSession(project: directory, historyDirectory: directory.appendingPathComponent("History"),
         permissions: StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
             requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
-        pastePreparer: { { .targetUnavailable } },
+        pastePreparer: { { _, _ in .targetUnavailable } },
         cleanupProcessors: [.apple: PreviewCleanupProcessor(), .qwen: PreviewCleanupProcessor(identifier: "qwen3-preview"),
                             .qwen17: PreviewCleanupProcessor(identifier: "qwen3-1.7b-preview")],
         captureBuilder: { _ in PreviewAudioCapture() }, clipboardWriter: { _ in true })

@@ -1,9 +1,30 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+struct StudioLogo: View {
+    private static let image: NSImage = {
+        guard let url = Bundle.module.url(forResource: "nami-logo", withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else {
+            preconditionFailure("Missing or invalid bundled Nami logo")
+        }
+        image.isTemplate = true
+        return image
+    }()
+
+    var body: some View {
+        Image(nsImage: Self.image)
+            .resizable()
+            .scaledToFit()
+            .accessibilityLabel("Nami")
+    }
+}
+
 enum StudioSidebarLayout {
     static let defaultWidth = 224.0
-    static let collapsedWidth = 64.0
+    /// Wide enough that the rail's border clears the window buttons, with the
+    /// same inset on the right of the zoom button as on the left of the close button.
+    static let collapsedWidth = 76.0
     static let minimumWidth = 200.0
     static let maximumWidth = 320.0
     static let collapseThreshold = 140.0

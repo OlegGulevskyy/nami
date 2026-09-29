@@ -24,7 +24,7 @@ let package = Package(
             "NamiCore", "NamiAudio", "NamiWhisperKit", "NamiAppleCleanup", "NamiMLXCleanup",
             .product(name: "Sparkle", package: "Sparkle"),
             .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
-        ], resources: [.copy("Resources/Fonts")]),
+        ], resources: [.copy("Resources/Fonts"), .copy("Resources/nami-logo.svg")]),
         .target(name: "NamiWhisperKit", dependencies: [
             "NamiCore", .product(name: "WhisperKit", package: "argmax-oss-swift"),
         ]),

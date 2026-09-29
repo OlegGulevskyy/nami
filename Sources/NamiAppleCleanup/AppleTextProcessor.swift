@@ -37,12 +37,6 @@ private struct UnavailableAppleProcessor: TextProcessor {
 
 #if canImport(FoundationModels)
 @available(macOS 26.0, *)
-@Generable fileprivate struct EditedTranscript {
-    @Guide(description: "The corrected transcript as plain text only. Never include before/after objects, labels or explanations.")
-    var text: String
-}
-
-@available(macOS 26.0, *)
 private actor AppleTextProcessor: TextProcessor {
     nonisolated let identifier = "apple-system-cleanup-v2"
     private let model = SystemLanguageModel.default
@@ -70,7 +64,9 @@ private actor AppleTextProcessor: TextProcessor {
             throw CleanupFailure.unavailable("This experiment is limited to 2,000 UTF-8 bytes of input.")
         }
         try Task.checkCancellation()
-        let session = preparedSession ?? LanguageModelSession(model: model, instructions: CleanupPrompt.instructions)
+        let instructions = request.prompts[.appleSystem]
+        let session = (instructions == CleanupPrompt.instructions ? preparedSession : nil)
+            ?? LanguageModelSession(model: model, instructions: instructions)
         preparedSession = nil // Never accumulate conversations or other dictations in model context.
         #if compiler(>=6.4)
         let options = GenerationOptions(samplingMode: .greedy, maximumResponseTokens: 2_048)
@@ -78,10 +74,19 @@ private actor AppleTextProcessor: TextProcessor {
         let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 2_048)
         #endif
         do {
-            let response = try await session.respond(to: CleanupPrompt.input(request),
-                generating: EditedTranscript.self, options: options)
+            let input = CleanupPrompt.input(request)
+            let guide = request.prompts[.appleOutput]
+            let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "EditedTranscript", properties: [
+                .init(name: "text", description: guide, schema: .init(type: String.self)),
+            ]), dependencies: [])
+            await request.promptObserver?(.init(requestID: request.id, provider: identifier, messages: [
+                .init(role: "system", content: instructions), .init(role: "user", content: input),
+                .init(role: "schema · text field", content: guide),
+            ], details: "EditedTranscript { text: String } · greedy · maximum 2,048 output tokens. Apple manages its internal system instructions."))
             try Task.checkCancellation()
-            return response.content.text
+            let response = try await session.respond(to: input, schema: schema, options: options)
+            try Task.checkCancellation()
+            return try response.content.value(String.self, forProperty: "text")
         } catch {
             #if compiler(>=6.4)
             if #available(macOS 27.0, *), let modelError = error as? LanguageModelError {

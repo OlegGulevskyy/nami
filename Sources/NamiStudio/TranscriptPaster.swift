@@ -5,21 +5,24 @@ import OSLog
 
 public enum TranscriptPasteResult: Equatable, Sendable {
     /// macOS accepts events asynchronously; the receiving app may still reject Paste.
-    case sent, accessibilityRequired, targetUnavailable, targetChanged, modifiersPressed, failed
+    case sent, accessibilityRequired, targetUnavailable, targetChanged, modifiersPressed, failed, clipboardRestoreFailed
 
-    var status: String {
+    func status(copied: Bool) -> String {
+        let recovery = copied ? "Transcript copied; paste it with ⌘V." : "Copy it from your history."
         switch self {
-        case .sent: "Paste sent to your text field. Transcript also copied."
-        case .accessibilityRequired: "Transcript copied. Allow Accessibility in Permissions to paste automatically."
-        case .targetUnavailable: "Transcript copied. Focus a text field in another app before recording to paste automatically."
-        case .targetChanged: "Transcript copied. The focused field changed; paste it where you need it."
-        case .modifiersPressed: "Transcript copied. Keys were held down; paste it with ⌘V."
-        case .failed: "Transcript copied. Automatic paste could not start; paste it with ⌘V."
+        case .sent: return "Paste sent to your text field. " + (copied ? "Transcript also copied." : "Clipboard preserved.")
+        case .accessibilityRequired: return "Allow Accessibility in Permissions to paste automatically. " + recovery
+        case .targetUnavailable: return "Focus a text field in another app before recording to paste automatically. " + recovery
+        case .targetChanged: return "The focused field changed. " + recovery
+        case .modifiersPressed: return "Keys were held down; automatic paste was skipped. " + recovery
+        case .failed: return "Automatic paste could not start. " + recovery
+        case .clipboardRestoreFailed: return "Your previous clipboard could not be restored. The transcript is in your history."
         }
     }
 }
 
-public typealias PreparedTranscriptPaste = @MainActor () -> TranscriptPasteResult
+/// The final text and whether the clipboard must be preserved during delivery.
+public typealias PreparedTranscriptPaste = @MainActor (_ text: String, _ preservingClipboard: Bool) async -> TranscriptPasteResult
 
 public enum TranscriptInsertResult: Equatable, Sendable {
     case inserted, accessibilityRequired, targetUnavailable, rejected
@@ -72,6 +75,8 @@ public enum TranscriptPinAttempt {
     private let focusedTarget: () -> Target?
     private let modifiers: () -> CGEventFlags
     private let postPaste: (pid_t) -> Bool
+    private let pasteboard: NSPasteboard
+    private let waitForPaste: @MainActor () async -> Void
     private let exposeAccessibility: (pid_t) -> Bool
     private let acceptsText: (AXUIElement) -> Bool
     private let insertText: (String, AXUIElement) -> TranscriptInsertResult
@@ -86,6 +91,12 @@ public enum TranscriptPinAttempt {
          focusedTarget: @escaping () -> Target? = { currentTarget() },
          modifiers: @escaping () -> CGEventFlags = { CGEventSource.flagsState(.combinedSessionState) },
          postPaste: @escaping (pid_t) -> Bool = { sendPaste(to: $0) },
+         pasteboard: NSPasteboard = .general,
+         waitForPaste: @escaping @MainActor () async -> Void = {
+             // Posted events are asynchronous. Cancellation must not shorten the
+             // receiving app's opportunity to read the temporary clipboard.
+             await Task { try? await Task.sleep(for: .milliseconds(500)) }.value
+         },
          exposeAccessibility: @escaping (pid_t) -> Bool = { requestAccessibilityTree(of: $0) },
          acceptsText: @escaping (AXUIElement) -> Bool = { isTextInput($0) },
          insertText: @escaping (String, AXUIElement) -> TranscriptInsertResult = { replaceSelection(in: $1, with: $0) },
@@ -98,6 +109,8 @@ public enum TranscriptPinAttempt {
         self.focusedTarget = focusedTarget
         self.modifiers = modifiers
         self.postPaste = postPaste
+        self.pasteboard = pasteboard
+        self.waitForPaste = waitForPaste
         self.exposeAccessibility = exposeAccessibility
         self.acceptsText = acceptsText
         self.insertText = insertText
@@ -109,15 +122,59 @@ public enum TranscriptPinAttempt {
     }
 
     func prepare() -> PreparedTranscriptPaste {
-        guard accessibilityGranted() else { return { .accessibilityRequired } }
-        guard let target = focusedTarget() else { return { .targetUnavailable } }
-        return { [self] in
+        guard accessibilityGranted() else { return { _, _ in .accessibilityRequired } }
+        guard let target = focusedTarget() else { return { _, _ in .targetUnavailable } }
+        return { [self] text, preservingClipboard in
+            guard !Task.isCancelled else { return .failed }
             guard accessibilityGranted() else { return .accessibilityRequired }
             guard focusedTarget() == target else { return .targetChanged }
             let heldKeys: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
             guard modifiers().intersection(heldKeys).isEmpty else { return .modifiersPressed }
+            if preservingClipboard {
+                return await pastePreservingClipboard(text, to: target)
+            }
             return postPaste(target.pid) ? .sent : .failed
         }
+    }
+
+    private func pastePreservingClipboard(_ text: String, to target: Target) async -> TranscriptPasteResult {
+        let initialChangeCount = pasteboard.changeCount
+        var original: [NSPasteboardItem] = []
+        let items = pasteboard.pasteboardItems ?? []
+        guard !items.isEmpty || (pasteboard.types ?? []).isEmpty else { return .failed }
+        // Materialize every representation before clearing the board; retaining
+        // NSPasteboardItems alone loses lazily supplied data when ownership changes.
+        for item in items {
+            let saved = NSPasteboardItem()
+            for type in item.types {
+                guard let data = item.data(forType: type), saved.setData(data, forType: type) else { return .failed }
+            }
+            original.append(saved)
+        }
+        guard pasteboard.changeCount == initialChangeCount, !Task.isCancelled else { return .failed }
+        // Reading a lazy pasteboard provider can take time. Recheck the destination
+        // before modifying the clipboard or sending any keys.
+        guard accessibilityGranted() else { return .accessibilityRequired }
+        guard focusedTarget() == target else { return .targetChanged }
+        let heldKeys: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn]
+        guard modifiers().intersection(heldKeys).isEmpty else { return .modifiersPressed }
+
+        let temporary = NSPasteboardItem()
+        guard temporary.setString(text, forType: .string),
+              temporary.setData(Data(), forType: .init("org.nspasteboard.TransientType")),
+              temporary.setData(Data(), forType: .init("org.nspasteboard.AutoGeneratedType")) else { return .failed }
+        pasteboard.clearContents()
+        let written = pasteboard.writeObjects([temporary])
+        let temporaryChangeCount = pasteboard.changeCount
+        let sent = written && postPaste(target.pid)
+        if sent { await waitForPaste() }
+        // A user or another app may have copied while the paste was in flight.
+        // Their newer clipboard always wins, including when this task is cancelled.
+        if pasteboard.changeCount == temporaryChangeCount {
+            pasteboard.clearContents()
+            if !original.isEmpty, !pasteboard.writeObjects(original) { return .clipboardRestoreFailed }
+        }
+        return sent ? .sent : .failed
     }
 
     /// Pins the focused field of the frontmost app. Nothing is typed or activated,

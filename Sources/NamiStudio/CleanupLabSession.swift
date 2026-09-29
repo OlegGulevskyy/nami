@@ -107,7 +107,7 @@ final class CleanupLabSession {
                 for engine in engines {
                     try Task.checkCancellation()
                     self.status = "Running \(engine.title)…"
-                    results.append(try await self.service.run(request, engine: engine, timeout: deadline))
+                    results.append(try await self.service.run(request, engine: engine, timeout: deadline, source: "Playground cleanup"))
                 }
                 try Task.checkCancellation()
                 var updatedRuns = self.runs

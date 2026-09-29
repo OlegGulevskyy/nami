@@ -22,15 +22,23 @@ struct InternalDebuggingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Picker("Debugging page", selection: $lab.page) {
-                    ForEach(DebuggingSession.Page.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            HStack(spacing: 22) {
+                ForEach(DebuggingSession.Page.allCases, id: \.self) { page in
+                    Button { lab.page = page } label: {
+                        Text(page.rawValue).font(.system(size: 13, weight: lab.page == page ? .semibold : .regular))
+                            .foregroundStyle(lab.page == page ? StudioStyle.ink : StudioStyle.quiet)
+                            .padding(.vertical, 16)
+                            .overlay(alignment: .bottom) {
+                                if lab.page == page { Rectangle().fill(StudioStyle.green).frame(height: 2) }
+                            }
+                    }.buttonStyle(.plain)
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 300)
                 Spacer()
-            }.padding(.horizontal, 28).padding(.vertical, 18)
+            }.padding(.horizontal, 24)
             StudioStyle.divider
-            if lab.page == .cleanup {
+            if lab.page == .prompts {
+                PromptsView(studio: session, store: lab.promptStore)
+            } else if lab.page == .cleanup {
                 CleanupLabView(lab: lab.cleanupLab, studio: session,
                     sourceText: lab.selectedResults.first {
                         $0.error == nil && $0.model.id != CloudTranscriber.model.id && $0.language == "en"

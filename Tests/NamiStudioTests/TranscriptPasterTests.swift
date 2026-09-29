@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Testing
@@ -9,85 +10,198 @@ import Testing
     var flags: CGEventFlags = []
     var sentTo: [pid_t] = []
     var canPost = true
+    var onPost: () -> Void = {}
 
-    func paster() -> TranscriptPaster {
+    func paster(pasteboard: NSPasteboard = .general,
+                waitForPaste: @escaping @MainActor () async -> Void = {}) -> TranscriptPaster {
         TranscriptPaster(accessibilityGranted: { self.allowed }, focusedTarget: { self.target },
                          modifiers: { self.flags }, postPaste: {
             self.sentTo.append($0)
+            self.onPost()
             return self.canPost
-        })
+        }, pasteboard: pasteboard, waitForPaste: waitForPaste)
     }
 }
 
-@Test @MainActor func pastesOnlyToTheCapturedAppAndField() {
+@Test @MainActor func pastesOnlyToTheCapturedAppAndField() async {
     let environment = PasteEnvironment()
     let paste = environment.paster().prepare()
     #expect(environment.sentTo.isEmpty)
-    #expect(paste() == .sent)
+    #expect(await paste("Transcript", false) == .sent)
     #expect(environment.sentTo == [42])
 }
 
-@Test @MainActor func appOrFieldChangesPreventPaste() {
+@Test @MainActor func appOrFieldChangesPreventPaste() async {
     let environment = PasteEnvironment()
     let paste = environment.paster().prepare()
     environment.target = .init(pid: 43, element: AXUIElementCreateApplication(43))
-    #expect(paste() == .targetChanged)
+    #expect(await paste("Transcript", false) == .targetChanged)
     environment.target = .init(pid: 42, element: AXUIElementCreateSystemWide())
-    #expect(paste() == .targetChanged)
+    #expect(await paste("Transcript", false) == .targetChanged)
     environment.target = .init(pid: 42, element: nil)
-    #expect(paste() == .targetChanged)
+    #expect(await paste("Transcript", false) == .targetChanged)
     environment.target = nil
-    #expect(paste() == .targetChanged)
+    #expect(await paste("Transcript", false) == .targetChanged)
     #expect(environment.sentTo.isEmpty)
 }
 
-@Test @MainActor func editorsWithoutAccessibilityElementsStillGetBestEffortPaste() {
+@Test @MainActor func editorsWithoutAccessibilityElementsStillGetBestEffortPaste() async {
     let environment = PasteEnvironment()
     environment.target = .init(pid: 42, element: nil)
     let paste = environment.paster().prepare()
-    #expect(paste() == .sent)
+    #expect(await paste("Transcript", false) == .sent)
     environment.target = .init(pid: 43, element: nil)
-    #expect(paste() == .targetChanged)
+    #expect(await paste("Transcript", false) == .targetChanged)
     #expect(environment.sentTo == [42])
 }
 
-@Test @MainActor func missingOrRevokedAccessibilityNeverPostsKeys() {
+@Test @MainActor func missingOrRevokedAccessibilityNeverPostsKeys() async {
     let environment = PasteEnvironment()
     let previouslyAllowed = environment.paster().prepare()
     environment.allowed = false
-    #expect(previouslyAllowed() == .accessibilityRequired)
+    #expect(await previouslyAllowed("Transcript", false) == .accessibilityRequired)
     let denied = environment.paster().prepare()
-    #expect(denied() == .accessibilityRequired)
+    #expect(await denied("Transcript", false) == .accessibilityRequired)
     environment.allowed = true
-    #expect(denied() == .accessibilityRequired)
+    #expect(await denied("Transcript", false) == .accessibilityRequired)
     #expect(environment.sentTo.isEmpty)
 }
 
-@Test @MainActor func missingInitialTargetDoesNotPasteIntoALaterApp() {
+@Test @MainActor func missingInitialTargetDoesNotPasteIntoALaterApp() async {
     let environment = PasteEnvironment()
     environment.target = nil
     let paste = environment.paster().prepare()
     environment.target = .init(pid: 42, element: nil)
-    #expect(paste() == .targetUnavailable)
+    #expect(await paste("Transcript", false) == .targetUnavailable)
     #expect(environment.sentTo.isEmpty)
 }
 
-@Test @MainActor func heldModifiersPreventAlteredPasteShortcuts() {
+@Test @MainActor func heldModifiersPreventAlteredPasteShortcuts() async {
     let environment = PasteEnvironment()
     let paste = environment.paster().prepare()
     for flag: CGEventFlags in [.maskCommand, .maskControl, .maskAlternate, .maskShift, .maskSecondaryFn] {
         environment.flags = flag
-        #expect(paste() == .modifiersPressed)
+        #expect(await paste("Transcript", false) == .modifiersPressed)
     }
     #expect(environment.sentTo.isEmpty)
     environment.flags = .maskAlphaShift // Caps Lock does not alter ⌘V.
-    #expect(paste() == .sent)
+    #expect(await paste("Transcript", false) == .sent)
 }
 
-@Test @MainActor func eventFailureIsReportedForManualRecovery() {
+@Test @MainActor func eventFailureIsReportedForManualRecovery() async {
     let environment = PasteEnvironment()
     environment.canPost = false
-    #expect(environment.paster().prepare()() == .failed)
+    #expect(await environment.paster().prepare()("Transcript", false) == .failed)
+}
+
+@Test @MainActor func temporaryPasteRestoresEveryClipboardItemAndRepresentation() async throws {
+    let board = NSPasteboard.withUniqueName()
+    defer { board.releaseGlobally() }
+    let text = NSPasteboardItem(), image = NSPasteboardItem()
+    let richText = Data(#"{\rtf1 Original formatted text}"#.utf8)
+    let imageBytes = Data([137, 80, 78, 71, 1, 2, 3])
+    text.setString("Original text", forType: .string)
+    text.setData(richText, forType: .rtf)
+    image.setData(imageBytes, forType: .png)
+    image.setString("file:///tmp/example.png", forType: .fileURL)
+    #expect(board.writeObjects([text, image]))
+    let environment = PasteEnvironment()
+    let transcript = "Hello 👋\n第二行\tend"
+    environment.onPost = {
+        #expect(board.string(forType: .string) == transcript)
+        #expect(board.types?.contains(.init("org.nspasteboard.TransientType")) == true)
+        #expect(board.types?.contains(.init("org.nspasteboard.AutoGeneratedType")) == true)
+    }
+    var waited = false
+    let paste = environment.paster(pasteboard: board, waitForPaste: {
+        await Task.yield()
+        #expect(board.string(forType: .string) == transcript)
+        waited = true
+    }).prepare()
+    #expect(await paste(transcript, true) == .sent)
+    let restored = try #require(board.pasteboardItems)
+    #expect(waited && environment.sentTo == [42])
+    #expect(restored.count == 2)
+    #expect(restored[0].string(forType: .string) == "Original text")
+    #expect(restored[0].data(forType: .rtf) == richText)
+    #expect(restored[1].data(forType: .png) == imageBytes)
+    #expect(restored[1].string(forType: .fileURL) == "file:///tmp/example.png")
+    #expect(board.types?.contains(.init("org.nspasteboard.TransientType")) != true)
+}
+
+@Test @MainActor func temporaryPasteRestoresEmptyClipboardAndRestoresAfterPostFailure() async {
+    let board = NSPasteboard.withUniqueName()
+    defer { board.releaseGlobally() }
+    let environment = PasteEnvironment()
+    #expect(await environment.paster(pasteboard: board).prepare()("Transcript", true) == .sent)
+    #expect(board.pasteboardItems?.isEmpty != false)
+
+    board.setString("Keep this", forType: .string)
+    environment.canPost = false
+    let paste = environment.paster(pasteboard: board, waitForPaste: {
+        Issue.record("Failed event delivery must restore immediately")
+    }).prepare()
+    #expect(await paste("Transcript", true) == .failed)
+    #expect(board.string(forType: .string) == "Keep this")
+}
+
+@Test @MainActor func temporaryPasteDoesNotOverwriteNewerClipboardContents() async {
+    let board = NSPasteboard.withUniqueName()
+    defer { board.releaseGlobally() }
+    board.setString("Old clipboard", forType: .string)
+    let environment = PasteEnvironment()
+    let paste = environment.paster(pasteboard: board, waitForPaste: {
+        board.clearContents()
+        board.setString("Copied while pasting", forType: .string)
+    }).prepare()
+    #expect(await paste("Transcript", true) == .sent)
+    #expect(board.string(forType: .string) == "Copied while pasting")
+}
+
+@Test @MainActor func temporaryPasteRestoresClipboardEvenWhenCancelledAfterPosting() async throws {
+    let board = NSPasteboard.withUniqueName()
+    defer { board.releaseGlobally() }
+    board.setString("Keep this", forType: .string)
+    let environment = PasteEnvironment()
+    var resume: CheckedContinuation<Void, Never>?
+    let paste = environment.paster(pasteboard: board, waitForPaste: {
+        await withCheckedContinuation { resume = $0 }
+    }).prepare()
+    let task = Task { await paste("Transcript", true) }
+    while resume == nil { await Task.yield() }
+    task.cancel()
+    #expect(board.string(forType: .string) == "Transcript")
+    resume?.resume()
+    #expect(await task.value == .sent)
+    #expect(board.string(forType: .string) == "Keep this")
+}
+
+@Test @MainActor func skippedTemporaryPasteNeverChangesClipboard() async {
+    let board = NSPasteboard.withUniqueName()
+    defer { board.releaseGlobally() }
+    board.setString("Keep this", forType: .string)
+    let originalChangeCount = board.changeCount
+    let environment = PasteEnvironment()
+    let paste = environment.paster(pasteboard: board).prepare()
+    environment.allowed = false
+    #expect(await paste("Transcript", true) == .accessibilityRequired)
+    environment.allowed = true
+    environment.flags = .maskCommand
+    #expect(await paste("Transcript", true) == .modifiersPressed)
+    environment.flags = []
+    environment.target = nil
+    #expect(await paste("Transcript", true) == .targetChanged)
+    #expect(board.changeCount == originalChangeCount && environment.sentTo.isEmpty)
+}
+
+@Test @MainActor func normalPasteLeavesCopiedTranscriptOnClipboard() async {
+    let board = NSPasteboard.withUniqueName()
+    defer { board.releaseGlobally() }
+    board.setString("Transcript", forType: .string)
+    let originalChangeCount = board.changeCount
+    let environment = PasteEnvironment()
+    #expect(await environment.paster(pasteboard: board).prepare()("Transcript", false) == .sent)
+    #expect(board.string(forType: .string) == "Transcript" && board.changeCount == originalChangeCount)
 }
 
 @MainActor private final class PinEnvironment {

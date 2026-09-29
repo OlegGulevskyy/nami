@@ -47,21 +47,12 @@ struct StudioKeycap: View {
     }
 }
 
+/// The system switch, so it keeps the native slide animation and picks up
+/// Liquid Glass on macOS 26 and later.
 struct StudioToggleStyle: ToggleStyle {
-    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
-        Button { configuration.isOn.toggle() } label: {
-            Capsule().fill(configuration.isOn ? StudioStyle.green : Color(red: 0.80, green: 0.83, blue: 0.77))
-                .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                    Circle().fill(.white).padding(2).frame(width: 20, height: 20)
-                }
-                .frame(width: 35, height: 20)
-                .opacity(isEnabled ? 1 : 0.5)
-        }
-        .buttonStyle(.plain)
-        .accessibilityRepresentation {
-            Toggle(isOn: configuration.$isOn) { configuration.label }.toggleStyle(.switch)
-        }
+        Toggle(isOn: configuration.$isOn) { configuration.label }
+            .toggleStyle(.switch).tint(StudioStyle.green)
     }
 }
 

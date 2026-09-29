@@ -109,18 +109,17 @@ public struct StudioSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
         }.disabled(session.phase.busy)
         section("Clipboard") {
-            row("Copy when finished", subtitle: "Your words on the clipboard, ready to paste.") {
+            row("Copy when finished", subtitle: "Keep the transcript on your clipboard. Turn off to preserve what you copied.") {
                 Toggle("Copy when finished", isOn: $session.settings.copyWhenFinished).labelsHidden().toggleStyle(StudioToggleStyle())
             }
-            row("Paste automatically", subtitle: "Insert recordings at your cursor in another app. Requires Copy when finished.") {
+            row("Paste automatically", subtitle: "Insert recordings at your cursor in another app, even when copying is off.") {
                 Toggle("Paste automatically", isOn: $session.settings.pasteWhenFinished)
                     .labelsHidden().toggleStyle(StudioToggleStyle())
-                    .disabled(!session.settings.copyWhenFinished)
             }
-            if session.settings.copyWhenFinished && session.settings.pasteWhenFinished {
+            if session.settings.pasteWhenFinished {
                 row("Accessibility", subtitle: session.permissions.accessibility
                     ? "Ready to paste into the focused app."
-                    : "Allow Nami to paste for you. Until then, transcripts are copied.") {
+                    : "Allow Nami to paste for you. Transcripts are always available in history.") {
                     if session.permissions.accessibility {
                         Label("Allowed", systemImage: "checkmark.circle").font(.system(size: 13))
                     } else {

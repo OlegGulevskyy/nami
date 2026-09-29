@@ -271,7 +271,7 @@ public final class StudioSession {
         let id = begin(), date = Date()
         status = "Starting microphone…"
         let options = settings
-        let paste = options.copyWhenFinished && options.pasteWhenFinished ? pastePreparer() : nil
+        let paste = options.pasteWhenFinished ? pastePreparer() : nil
         let prompt = selectedPrompt?.reference ?? ""
         operation = Task { [weak self] in
             guard let self else { return }
@@ -302,6 +302,7 @@ public final class StudioSession {
                 let feed = Task {
                     let engine = try await preparation.value()
                     try self.check(id)
+                    await engine.setPromptObserver(self.debugging.promptStore.observer(source: "Live dictation"))
                     try await engine.startLive(sessionID: id, language: options.language == "auto" ? nil : options.language,
                                                vocabulary: options.vocabulary, onPartial: nil)
                     for try await chunk in liveAudio.stream {
@@ -416,6 +417,7 @@ public final class StudioSession {
                 }
                 let engine = try await self.preparedEngine(options)
                 try self.check(id)
+                await engine.setPromptObserver(self.debugging.promptStore.observer(source: previous == nil ? "Audio import" : "History retry"))
                 try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language,
                                        vocabulary: options.vocabulary, onPartial: nil)
                 for offset in stride(from: 0, to: samples.count, by: 1600) {
@@ -678,7 +680,7 @@ public final class StudioSession {
             let memory = options.cleanupUseMemory ? debugging.cleanupLab.memory : CleanupMemory()
             processing = try await cleanupService.run(.init(id: id, rawText: original,
                 language: options.language, memory: memory), engine: options.cleanupEngine,
-                timeout: options.cleanupTimeoutSeconds)
+                timeout: options.cleanupTimeoutSeconds, source: previous == nil ? "Dictation cleanup" : "History retry cleanup")
             try check(id)
             text = processing?.text ?? original
         }
@@ -710,12 +712,11 @@ public final class StudioSession {
             let copied = options.copyWhenFinished && copyToClipboard(text)
             status = await destination.insert(text).status(app: destination.appName, copied: copied)
         } else {
-            if options.copyWhenFinished {
-                if copyToClipboard(text) {
-                    status = paste?().status ?? "Transcript copied. Paste it wherever you need it."
-                } else {
-                    status = "Your transcript is ready."
-                }
+            let copied = options.copyWhenFinished && copyToClipboard(text)
+            if let paste {
+                status = await paste(text, !copied).status(copied: copied)
+            } else if copied {
+                status = "Transcript copied. Paste it wherever you need it."
             } else {
                 status = "Your transcript is ready. Copy it whenever you need it."
             }

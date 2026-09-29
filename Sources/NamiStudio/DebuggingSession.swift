@@ -11,8 +11,9 @@ import NamiWhisperKit
 /// clipboard. Every model sees the same saved audio and reference snapshot.
 @MainActor @Observable
 public final class DebuggingSession {
-    enum Page: String, CaseIterable { case transcription = "Transcription", cleanup = "Cleanup" }
+    enum Page: String, CaseIterable { case transcription = "Transcription", cleanup = "Cleanup", prompts = "Prompts" }
     var page: Page = .transcription
+    let promptStore: PromptStore
     let cleanupLab: CleanupLabSession
     public func cleanupLabCancel() { cleanupLab.cancel() }
 
@@ -71,7 +72,9 @@ public final class DebuggingSession {
          cloudTranscriber: CloudTranscriber = CloudTranscriber(),
          captureBuilder: @escaping @MainActor (String?) -> any AudioCapturing = { MicrophoneCapture(deviceUID: $0) }) {
         store = DebuggingStore(directory: directory)
+        promptStore = PromptStore(directory: directory)
         cleanupLab = CleanupLabSession(directory: directory.appendingPathComponent("Cleanup"), service: cleanupService)
+        cleanupLab.service.promptStore = promptStore
         self.apiKeyStore = apiKeyStore
         var initialAPIKey = environmentAPIKey
         do {
@@ -294,7 +297,9 @@ public final class DebuggingSession {
                 let audio = try await Task.detached { try AudioFile.read(url) }.value
                 try Task.checkCancellation()
                 started = .now
-                try await engine.start(sessionID: id, language: sample.language == "auto" ? nil : sample.language, onPartial: nil)
+                await engine.setPromptObserver(promptStore.observer(source: "Playground transcription"))
+                try await engine.start(sessionID: id, language: sample.language == "auto" ? nil : sample.language,
+                                       vocabulary: promptStore.playgroundVocabulary, onPartial: nil)
                 for offset in stride(from: 0, to: audio.count, by: 1600) {
                     try Task.checkCancellation()
                     try await engine.append(AudioChunk(samples: Array(audio[offset..<min(audio.count, offset + 1600)]),
@@ -350,7 +355,8 @@ public final class DebuggingSession {
                     let start = ContinuousClock.now
                     do {
                         let data = try Data(contentsOf: self.store.audioURL(sample.id))
-                        let response = try await self.cloudTranscriber.transcribe(audio: data, language: sample.language, apiKey: key)
+                        let response = try await self.cloudTranscriber.transcribe(audio: data, language: sample.language, apiKey: key,
+                            promptObserver: self.promptStore.observer(source: "Playground cloud comparison"))
                         try Task.checkCancellation()
                         self.workspace.results.append(DebugResult(batchID: batchID, sampleID: sample.id,
                             model: CloudTranscriber.model, expectedText: sample.expectedText, language: sample.language,

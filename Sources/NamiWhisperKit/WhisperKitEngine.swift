@@ -64,6 +64,10 @@ public final class WhisperKitEngine: TranscriptionEngine {
         return folder
     }
 
+    public func setPromptObserver(_ observer: ModelPromptObserver?) async {
+        await runtime.setPromptObserver(observer)
+    }
+
     public func prepare() async throws {
         guard !prepared else { return }
         do {
@@ -82,6 +86,7 @@ public final class WhisperKitEngine: TranscriptionEngine {
         try buffer.start(sessionID)
         self.language = language
         self.vocabulary = vocabulary
+        await runtime.setRequestID(sessionID)
     }
 
     public func startLive(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
@@ -156,6 +161,10 @@ public final class WhisperKitEngine: TranscriptionEngine {
 private actor WhisperRuntime {
     private let modelFolder: String
     private var pipeline: WhisperKit?
+    private var promptObserver: ModelPromptObserver?
+    private var requestID = UUID()
+    func setPromptObserver(_ observer: ModelPromptObserver?) { promptObserver = observer }
+    func setRequestID(_ id: UUID) { requestID = id }
 
     init(modelFolder: String) { self.modelFolder = modelFolder }
 
@@ -206,6 +215,11 @@ private actor WhisperRuntime {
                 }
             }
         }
+        let tokens = options.promptTokens ?? []
+        await promptObserver?(.init(requestID: requestID, provider: "Whisper · " + URL(fileURLWithPath: modelFolder).lastPathComponent,
+            messages: [.init(role: "vocabulary · effective prompt", content: pipeline.tokenizer?.decode(tokens: tokens) ?? "")],
+            details: "Language: \(language ?? "auto") · vocabulary token IDs: \(tokens). Whisper keeps the final \((Constants.maxTokenContext / 2) - 1) vocabulary tokens. No system prompt. Each entry is one decode call; the SDK manages audio windows internally."))
+        try Task.checkCancellation()
         let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)
         try Task.checkCancellation()
         return DecodedAudio(

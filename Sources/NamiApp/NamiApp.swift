@@ -100,7 +100,7 @@ struct NamiApp: App {
                 permissions: StudioPermissions(microphoneStatus: { .notDetermined }, inputMonitoringStatus: { false },
                     accessibilityStatus: { false }, requestAccessibility: { false },
                     requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
-                pastePreparer: { { .targetUnavailable } }, captureBuilder: StudioSession.systemCapture,
+                pastePreparer: { { _, _ in .targetUnavailable } }, captureBuilder: StudioSession.systemCapture,
                 clipboardWriter: { _ in true })
             try renderView(AnyView(StudioView(session: permissionSession, page: .constant(.history))),
                            size: NSSize(width: 760, height: 600), to: output.appendingPathComponent("permissions.png"))

@@ -1,4 +1,5 @@
 import Foundation
+import NamiCore
 
 struct CloudTranscript: Codable, Sendable {
     struct Word: Codable, Sendable {
@@ -19,7 +20,7 @@ struct CloudTranscriber: Sendable {
         try await URLSession.shared.data(for: $0)
     }
 
-    func transcribe(audio: Data, language: String, apiKey: String) async throws -> CloudTranscript {
+    func transcribe(audio: Data, language: String, apiKey: String, promptObserver: ModelPromptObserver? = nil) async throws -> CloudTranscript {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { throw StudioError.message("Enter an ElevenLabs API key or set ELEVENLABS_API_KEY.") }
         let boundary = "Nami-" + UUID().uuidString
@@ -40,6 +41,8 @@ struct CloudTranscriber: Sendable {
         request.setValue(key, forHTTPHeaderField: "xi-api-key")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
+        await promptObserver?(.init(requestID: UUID(), provider: "ElevenLabs · Scribe v2", messages: [],
+            details: "Audio transcription; Nami sends no text or system prompt. Language: \(language)."))
         let (data, response) = try await transport(request)
         try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw StudioError.message("Invalid cloud response.") }

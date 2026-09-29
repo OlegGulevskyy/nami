@@ -18,16 +18,18 @@ public enum CleanupPrompt {
         // A small model follows a short, explicit edit more reliably than two
         // nearly identical example paragraphs. Keep full examples for rewrites.
         var sections = examples.filter { !highlightEdits || savedEdit($0) == nil }.map {
-            "Example dictation: \(quoted($0.rawText))\nExample corrected sentence: \(quoted($0.correctedText))"
+            PromptConfiguration.render(request.prompts[.example], values: ["raw": quoted($0.rawText), "corrected": quoted($0.correctedText)])
         }
         if highlightEdits {
-            let edits = examples.compactMap(savedEdit).compactMap { $0.instruction(for: text) }
+            let edits = examples.compactMap(savedEdit).compactMap { $0.instruction(for: text, template: request.prompts[.savedEdit]) }
             if !edits.isEmpty {
-                sections.append("Apply these user-approved wording changes when that wording occurs in the current transcript:\n" + edits.joined(separator: "\n"))
+                sections.append(request.prompts[.editsHeading] + "\n" + edits.joined(separator: "\n"))
             }
         }
-        sections.append("Edit this transcript only:\n\(quoted(text))\nReturn the corrected sentence as plain text.")
-        return sections.joined(separator: "\n\n")
+        let context = sections.isEmpty ? "" : sections.joined(separator: "\n\n") + "\n\n"
+        return PromptConfiguration.render(request.prompts[.cleanupUser], values: [
+            "context": context, "transcript": quoted(text), "language": request.language,
+        ])
     }
 
     /// Describe small edits the user actually made to a generated result. This
@@ -51,7 +53,7 @@ public enum CleanupPrompt {
     private struct SavedEdit {
         let source: String
         let replacement: String
-        func instruction(for text: String) -> String? {
+        func instruction(for text: String, template: String) -> String? {
             // Match whole terms, not identifiers or a filename already corrected
             // to e.g. pom.xml. A trailing sentence period is still a boundary.
             let escaped = NSRegularExpression.escapedPattern(for: source)
@@ -59,7 +61,7 @@ public enum CleanupPrompt {
             guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
                   let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                   let range = Range(match.range, in: text) else { return nil }
-            return "Replace \(quoted(String(text[range]))) with \(quoted(replacement)) in the transcript."
+            return PromptConfiguration.render(template, values: ["source": quoted(String(text[range])), "replacement": quoted(replacement)])
         }
     }
 

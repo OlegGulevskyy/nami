@@ -5,6 +5,8 @@ public struct CleanupRequest: Sendable {
     public var rawText: String
     public var language: String
     public var memory: CleanupMemory
+    public var prompts = PromptConfiguration()
+    public var promptObserver: ModelPromptObserver?
 
     public init(id: UUID = UUID(), rawText: String, language: String = "en", memory: CleanupMemory = .init()) {
         self.id = id

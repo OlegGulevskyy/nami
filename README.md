@@ -6,9 +6,8 @@ Progress is in [TRACKER.md](TRACKER.md).
 
 Next focus: [transcript cleanup and personalization spec](SPEC-cleanup.md),
 with an [implementation plan](tasks/plan.md) and [task checklist](tasks/todo.md).
-These describe planned work; cleanup and learning are not implemented yet.
-The **Playground** page already supports recording samples and comparing
-speech-recognition models entirely in the app.
+The **Playground** page supports transcription comparisons, local cleanup
+experiments, saved corrections, and editable model prompts.
 
 ## Playground
 
@@ -44,8 +43,37 @@ The `nami-lab` CLI supports detailed benchmark reports, local runs, verified
 references, and explicitly approved cloud comparisons. Reports include audio
 hashes, run snapshots, paired differences, category summaries, and failures.
 See the [agent benchmark workflow](docs/transcription-benchmarks.md) for commands,
-normalization limits, and the improvement protocol. Text cleanup and learning
-remain the next stage described in the spec.
+normalization limits, and the improvement protocol.
+
+### Inspect and edit prompts
+
+Open **Playground → Prompts**, choose **Cleanup** or **Transcription**, then select
+its model. In **Edit & preview**, the editable fields are on the left and the
+assembled request to that same model is on the right. The preview updates as you
+type; switch between **Your draft** and **Currently saved** to compare them.
+
+Cleanup shows the system prompt, user message template, and sample transcript.
+The system prompt belongs to the selected model; the user template is shared by
+Qwen and Apple. Advanced settings contain saved-correction templates and Apple's
+output-field instructions. **Save cleanup prompts** applies the selected model's
+edits and shared templates to future requests, including live dictation and retries.
+**Reset** restores an individual field's default in the draft; save to apply it.
+
+Under **Transcription → Whisper**, choose **Live dictation** or **Playground**,
+edit vocabulary hints, then click **Save vocabulary**. Whisper has no system prompt.
+ElevenLabs receives audio and transcription options, with no editable text prompt.
+Providers' internal instructions and tokenizer formatting are outside Nami's control.
+
+**Sent requests** shows the selected model's actual messages captured immediately
+before inference, with provider, source, time, and request ID. Cleanup includes the
+resolved transcript and relevant saved corrections; Whisper shows the effective
+vocabulary after its token limit. Requests remain visible if inference later fails.
+Vocabulary-only cleanup has no model prompt; ElevenLabs requests are audio-only.
+
+Prompt settings (`prompts.json`) and recent request history (`prompt-history.json`)
+stay in the local Playground workspace across launches. History keeps up to 200
+requests within an 8 MB text budget, so it is a recent diagnostic log, not an unlimited
+archive. It cannot reconstruct prompts from runs made before this feature.
 
 ## Open the recording studio
 
@@ -93,7 +121,8 @@ you return to Nami. Revoking a required permission stops an active recording.
    cleanup before publishing the final transcript. Escape cancels.
 5. The finished transcript is **copied to the clipboard automatically**. When
    recording with a shortcut from another app, Nami also **pastes at your cursor**
-   after you allow Accessibility. You can **Listen** to the captured audio or use **Copy** again.
+   after you allow Accessibility. Turn off **Copy when finished** to keep your previous
+   clipboard while still pasting automatically. You can **Listen** to the captured audio or use **Copy** again.
    **Import audio** lets you transcribe an existing recording without a microphone.
    Transcripts are grouped by day. Click the search icon or press **⌘F** to search;
    hover a transcript for playback, or use its context menu. **⌘R** starts/stops recording.
@@ -119,8 +148,9 @@ distributed builds use `~/Library/Application Support/Nami/nami.json`.
 Vocabulary stays on-device and applies to the next normal recording or audio import
 without reloading the model. Keep the list short: WhisperKit limits its prompt
 context and retains the end of long lists. These are recognition hints, not guaranteed
-spellings or cleanup instructions. Clear the field to disable hints. Internal
-debugging comparisons and CLI benchmarks keep their unprompted baseline.
+spellings or cleanup instructions. Clear the field to disable hints. Playground
+comparisons use their own hint in **Playground → Prompts**, empty by default.
+CLI benchmarks keep their unprompted baseline.
 
 All studio recordings and
 transcripts are saved automatically in `~/Library/Application Support/Nami/History`,
@@ -206,15 +236,25 @@ Click the text field you want to dictate into, use the global shortcut to start
 and stop, and keep that field focused until transcription finishes. Nami sends
 **⌘V**, never Enter, so messages remain drafts for you to send. **Paste automatically**
 is enabled by default and can be turned off in Settings while retaining automatic copying.
+The two settings are independent: **Copy when finished** controls whether the
+finished transcript stays on your clipboard. With copying off, automatic paste
+temporarily places the transcript on the clipboard, sends **⌘V**, and restores
+the previous items and all their available formats after a short handoff delay.
+If you copy something else during that delay, Nami keeps your newer clipboard.
+Temporary text is marked with the [standard transient and autogenerated types](https://nspasteboard.org/)
+so clipboard managers that honor those markers exclude it from history. Managers
+that ignore them may still record it.
 
 Nami remembers the foreground app and, when available, the focused Accessibility
-element at recording start. If the app or field differs at completion, Nami leaves
-the text on the clipboard for manual recovery. Editors that do not expose their
+element at recording start. If the app or field differs at completion, Nami skips
+paste; the transcript remains in history and is copied only if copying is enabled.
+Editors that do not expose their
 focused element get a best-effort paste guarded by the foreground app only.
 If you hold shortcut modifiers when transcription finishes, paste is skipped.
 Recordings started with Nami in front, audio imports, and the manual Copy button
-only copy. The transcript stays on the clipboard after paste; Nami does not restore
-its previous contents. An app can reject the paste event, so history and Copy
+do not automatically paste. Recordings and imports respect **Copy when finished**;
+manual Copy always copies. Paste events are asynchronous, and an app can reject
+the event or read the clipboard too late, so history and Copy
 remain available. Live compatibility checks in T3 Code, Chrome, and Slack are pending.
 Menu bar dictation is still upcoming.
 

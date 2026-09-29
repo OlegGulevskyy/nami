@@ -176,7 +176,7 @@ public struct StudioView: View {
             if session.modifierShortcut.enabled && !session.modifierShortcut.isListening {
                 shortcutPermissionNotice.padding(.top, 16)
             }
-            if session.settings.copyWhenFinished && session.settings.pasteWhenFinished && !session.permissions.accessibility {
+            if session.settings.pasteWhenFinished && !session.permissions.accessibility {
                 HStack(spacing: 10) {
                     Text("Allow Accessibility to paste your recordings automatically.")
                     Spacer(minLength: 8)
@@ -195,8 +195,9 @@ public struct StudioView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 0) {
                 if !sidebarCollapsed {
-                    Text("nami")
-                        .font(.system(size: 20, weight: .semibold, design: .rounded)).tracking(-0.4)
+                    StudioLogo()
+                        .foregroundStyle(StudioStyle.green)
+                        .frame(width: 42, height: 32)
                         .padding(.leading, 12)
                     Spacer(minLength: 0)
                 }
@@ -528,18 +529,18 @@ private struct RecordingHistoryRow: View {
                 .buttonStyle(.plain).frame(width: 24, height: 24)
                 .disabled(session.phase.busy)
                 .accessibilityLabel(session.playing && session.selectedRunID == run.id ? "Stop playback" : "Listen to recording")
-                .help("Listen to recording")
+                .help(session.playing && session.selectedRunID == run.id ? "Stop" : "Play")
             }
             if session.retranscribingRunID == run.id {
                 ProgressView().controlSize(.small).frame(width: 24, height: 24)
                     .accessibilityLabel("Re-transcribing recording")
-                    .help("Re-transcribing recording…")
+                    .help("Re-transcribing…")
             } else if hovered || confirmDelete {
                 Button { session.retranscribeRun(run.id) } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).frame(width: 24, height: 24)
                     .disabled(session.busyForUpdate)
                     .accessibilityLabel("Re-transcribe recording")
-                    .help("Re-transcribe using current settings")
+                    .help("Re-transcribe")
             }
             if hovered || confirmDelete {
                 Button {
@@ -549,7 +550,7 @@ private struct RecordingHistoryRow: View {
                 } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc") }
                     .buttonStyle(.plain).frame(width: 24, height: 24)
                     .disabled(!run.hasTranscript)
-                    .help(copied ? "Copied" : "Copy transcript")
+                    .help(copied ? "Copied" : "Copy")
                     .accessibilityLabel(copied ? "Transcript copied" : "Copy transcript")
 
                 Rectangle().fill(StudioStyle.line)
@@ -560,7 +561,7 @@ private struct RecordingHistoryRow: View {
                     .buttonStyle(.plain).frame(width: 24, height: 24)
                     .disabled(session.retranscribingRunID == run.id)
                     .accessibilityLabel("Delete recording")
-                    .help("Delete recording")
+                    .help("Delete")
             }
         }
     }

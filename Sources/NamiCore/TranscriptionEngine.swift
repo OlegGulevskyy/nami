@@ -46,6 +46,7 @@ public enum EngineError: Error, Equatable, Sendable, LocalizedError {
 @MainActor
 public protocol TranscriptionEngine: AnyObject {
     var capabilities: EngineCapabilities { get }
+    func setPromptObserver(_ observer: ModelPromptObserver?) async
     func prepare() async throws
     /// Vocabulary provides optional recognition hints, snapshotted for this session.
     func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws
@@ -57,6 +58,7 @@ public protocol TranscriptionEngine: AnyObject {
 }
 
 public extension TranscriptionEngine {
+    func setPromptObserver(_ observer: ModelPromptObserver?) async {}
     func startLive(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
         try await start(sessionID: sessionID, language: language, vocabulary: vocabulary, onPartial: onPartial)
     }

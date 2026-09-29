@@ -33,7 +33,7 @@ import Testing
         #expect(finished)
 
         handle.width = StudioSidebarLayout.collapsedWidth
-        handle.mouseDown(with: try event(.leftMouseDown, x: 64))
+        handle.mouseDown(with: try event(.leftMouseDown, x: StudioSidebarLayout.collapsedWidth))
         handle.mouseDragged(with: try event(.leftMouseDragged, x: 224))
         #expect(proposedWidth == 224)
         #expect(!handle.mouseDownCanMoveWindow)

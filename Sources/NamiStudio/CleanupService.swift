@@ -15,6 +15,7 @@ final class CleanupService {
     var qwenInstalled: Bool { installed.contains(.qwen) }
     var downloading: Bool { downloadingEngine != nil }
     var managingModels: Bool { downloading || removingEngine != nil }
+    var promptStore: PromptStore?
     let modelsRoot: URL
     @ObservationIgnored private let processors: [CleanupEngine: any TextProcessor]
     @ObservationIgnored private let runners: [CleanupEngine: CleanupRunner]
@@ -92,7 +93,12 @@ final class CleanupService {
         }
     }
 
-    func run(_ request: CleanupRequest, engine: CleanupEngine, timeout: Double) async throws -> CleanupResult {
+    func run(_ request: CleanupRequest, engine: CleanupEngine, timeout: Double, source: String = "Cleanup") async throws -> CleanupResult {
+        var request = request
+        if let promptStore {
+            request.prompts = promptStore.configuration
+            request.promptObserver = promptStore.observer(source: source)
+        }
         refreshAvailability()
         let selected = engine == .automatic ? automaticEngine : engine
         if removingEngine == selected {

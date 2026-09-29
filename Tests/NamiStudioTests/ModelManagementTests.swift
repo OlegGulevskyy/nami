@@ -26,7 +26,7 @@ private func fakeWhisper(at folder: URL) throws {
     StudioSession(project: root, historyDirectory: root.appendingPathComponent("History"),
         permissions: StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
             requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
-        pastePreparer: { { .targetUnavailable } }, cleanupProcessors: processors,
+        pastePreparer: { { _, _ in .targetUnavailable } }, cleanupProcessors: processors,
         modelDirectory: root.appendingPathComponent("Models"), captureBuilder: { _ in ModelTestCapture() }, clipboardWriter: { _ in true })
 }
 
