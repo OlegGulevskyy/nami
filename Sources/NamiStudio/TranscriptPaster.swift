@@ -199,7 +199,8 @@ public enum TranscriptPinAttempt {
             let element = target.element.flatMap { acceptsText($0) ? $0 : nil }
                 ?? searchFocusedField(first.pid).flatMap { acceptsText($0) ? $0 : nil }
             if let element {
-                Self.log.notice("Pinned a \(Self.role(of: element), privacy: .public) in \(name, privacy: .public) after \(attempt + 1) checks; from app focus: \(target.element.map { CFEqual($0, element) } ?? false, privacy: .public)")
+                let fromAppFocus = target.element.map { CFEqual($0, element) } ?? false
+                Self.log.notice("Pinned a \(Self.role(of: element), privacy: .public) in \(name, privacy: .public) after \(attempt + 1) checks; from app focus: \(fromAppFocus, privacy: .public)")
                 let pid = target.pid
                 return .pinned(PinnedTranscriptDestination(appName: name) { [self] text in
                     guard accessibilityGranted() else { return .accessibilityRequired }
