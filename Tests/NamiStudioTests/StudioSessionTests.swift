@@ -359,14 +359,21 @@ private func projectDirectory() throws -> URL {
     apple.unavailable = true
     let service = CleanupService(processors: [.apple: apple, .qwen: qwen])
     let request = CleanupRequest(rawText: "Original")
-    let automatic = try await service.run(request, engine: .automatic, timeout: 1)
-    #expect(automatic.provider == "qwen-test" && automatic.text == "Qwen result.")
-    let explicit = try await service.run(request, engine: .apple, timeout: 1)
-    #expect(explicit.outcome == .unavailable && explicit.text == "Original")
+    // Test provider selection without racing CI's parallel MainActor work.
+    // Deadline enforcement is covered separately in CleanupTests.
+    let timeout: Double = 10
+    let automatic = try await service.run(request, engine: .automatic, timeout: timeout)
+    #expect(automatic.outcome == .cleaned)
+    #expect(automatic.provider == "qwen-test")
+    #expect(automatic.text == "Qwen result.")
+    let explicit = try await service.run(request, engine: .apple, timeout: timeout)
+    #expect(explicit.outcome == .unavailable)
+    #expect(explicit.text == "Original")
     #expect(qwen.requests.count == 1)
     qwen.unavailable = true
-    let noModels = try await service.run(request, engine: .automatic, timeout: 1)
-    #expect(noModels.provider == "vocabulary-v1" && noModels.text == "Original")
+    let noModels = try await service.run(request, engine: .automatic, timeout: timeout)
+    #expect(noModels.provider == "vocabulary-v1")
+    #expect(noModels.text == "Original")
 }
 
 @MainActor private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
