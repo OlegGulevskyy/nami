@@ -290,7 +290,7 @@ struct PromptsView: View {
             Spacer(minLength: 8)
             Button("Discard") { discard() }.disabled(!dirty)
             Button(destination.isCleanup ? "Save cleanup prompts" : "Save vocabulary") { save() }
-                .buttonStyle(.borderedProminent).tint(StudioStyle.green).disabled(!dirty || store.loadFailed)
+                .studioProminentButton().tint(StudioStyle.green).disabled(!dirty || store.loadFailed)
         }.padding(.top, 2)
     }
 

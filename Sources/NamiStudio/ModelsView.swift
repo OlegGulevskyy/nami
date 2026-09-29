@@ -141,7 +141,7 @@ struct ModelsView: View {
                 } label: { Image(systemName: "ellipsis") }.fixedSize().help("Model options")
             } else if !model.hasFiles {
                 Button("Download") { session.debugging.downloadModel(model.name, to: session.modelLibrary.installRoot(for: model)) }
-                    .buttonStyle(.borderedProminent).disabled(locked)
+                    .studioProminentButton().disabled(locked)
             }
             if model.hasFiles {
                 if model.managed {
@@ -180,7 +180,7 @@ struct ModelsView: View {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([service.folder(for: model)]) }
                 } else if !hasFiles {
                     Button("Download") { service.downloadQwen(model.engine) }
-                        .buttonStyle(.borderedProminent).disabled(locked)
+                        .studioProminentButton().disabled(locked)
                 }
                 Spacer()
                 if hasFiles && !downloading {

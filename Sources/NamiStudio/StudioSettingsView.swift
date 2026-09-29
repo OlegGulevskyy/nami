@@ -439,11 +439,16 @@ public struct StudioSettingsView: View {
 }
 
 private extension View {
-    func preferenceControl() -> some View {
-        font(.system(size: 13)).foregroundStyle(StudioStyle.green)
+    @ViewBuilder func preferenceControl() -> some View {
+        let control = font(.system(size: 13)).foregroundStyle(StudioStyle.green)
             .padding(.horizontal, 11).frame(minHeight: 32)
-            .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StudioStyle.line))
+        if #available(macOS 26, *) {
+            control.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 7))
+        } else {
+            control
+                .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StudioStyle.line))
+        }
     }
     func preferenceMenu() -> some View {
         menuStyle(.borderlessButton).fixedSize().preferenceControl()

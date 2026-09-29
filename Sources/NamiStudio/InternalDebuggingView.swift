@@ -146,7 +146,7 @@ struct InternalDebuggingView: View {
                 Button(needsSetup ? "Set up comparison" : "Compare") {
                     if needsSetup { showSettings = true } else { confirmCloud = true }
                 }
-                .buttonStyle(.borderedProminent).controlSize(.large).disabled(locked)
+                .studioProminentButton().controlSize(.large).disabled(locked)
             }
             Spacer()
             Toggle("Highlight differences", isOn: $highlightDifferences)

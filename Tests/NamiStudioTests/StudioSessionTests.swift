@@ -206,11 +206,17 @@ private func projectDirectory() throws -> URL {
     let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
     processor.blocked = true
     defer { processor.release() }
-    var copies: [String] = [], pastes = 0
+    var copies: [String] = [], pastes = 0, pasted: [String] = []
+    weak var observed: StudioSession?
+    var indicatorAtPaste: (cleaning: Bool, pasting: Bool)?
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
-        permissions: allowedPermissions(), pastePreparer: { { _, _ in pastes += 1; return .sent } },
+        permissions: allowedPermissions(), pastePreparer: { { text, _ in
+            pastes += 1; pasted.append(text)
+            indicatorAtPaste = observed.map { ($0.isCleaningUp, $0.isPasting) }
+            return .sent } },
         engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
         clipboardWriter: { copies.append($0); return true })
+    observed = session
     session.debugging.cleanupLab.addVocabulary(heard: "name me", replacement: "Nami")
     session.settings.cleanupEngine = .apple
     session.settings.cleanupEnabled = true
@@ -231,7 +237,10 @@ private func projectDirectory() throws -> URL {
     processor.release()
     try await waitUntil { !session.phase.busy }
     #expect(copies == [processor.output] && pastes == 1)
-    #expect(!session.isCleaningUp)
+    // Only cleaned text is pasted, and the indicator no longer claims cleanup is running.
+    #expect(pasted == [processor.output])
+    #expect(indicatorAtPaste?.cleaning == false && indicatorAtPaste?.pasting == true)
+    #expect(!session.isCleaningUp && !session.isPasting)
     let run = try #require(session.runs.first)
     #expect(run.transcript == processor.output)
     #expect(run.rawTranscript == engine.transcript)

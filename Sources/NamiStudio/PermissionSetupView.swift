@@ -34,7 +34,7 @@ struct PermissionSetupView: View {
                     }
                 }
             }
-            .buttonStyle(.borderedProminent).tint(StudioStyle.green).controlSize(.regular)
+            .studioProminentButton().tint(StudioStyle.green).controlSize(.regular)
             .disabled(permissions.requestingMicrophone)
 
             Text("In System Settings → Privacy & Security, enable Nami. If it’s already enabled but access is still missing, switch it off and on, then quit and reopen Nami. Follow any restart prompt from macOS.")
@@ -56,10 +56,7 @@ struct PermissionSetupView: View {
         }
         .padding(30).frame(width: 520)
         .foregroundStyle(StudioStyle.ink)
-        .background(StudioStyle.paper.opacity(0.96), in: RoundedRectangle(cornerRadius: 22))
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
-        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(StudioStyle.line))
-        .shadow(color: StudioStyle.ink.opacity(0.14), radius: 30, y: 12)
+        .setupCard()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Permissions required")
         .environment(\.colorScheme, .light)
@@ -92,6 +89,19 @@ struct PermissionSetupView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if !granted { action().padding(.top, 3) }
             }
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder func setupCard() -> some View {
+        if #available(macOS 26, *) {
+            glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22))
+        } else {
+            background(StudioStyle.paper.opacity(0.96), in: RoundedRectangle(cornerRadius: 22))
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+                .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(StudioStyle.line))
+                .shadow(color: StudioStyle.ink.opacity(0.14), radius: 30, y: 12)
         }
     }
 }

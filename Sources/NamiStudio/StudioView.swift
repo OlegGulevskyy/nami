@@ -52,6 +52,7 @@ public struct StudioView: View {
     @State private var draggedSidebarWidth: Double?
     @State private var resizingSidebar = false
     @FocusState private var searchFocused: Bool
+    @State private var floatingBarHeight = 0.0
 
     public init(session: StudioSession, page: Binding<Page>) {
         self.session = session
@@ -172,23 +173,40 @@ public struct StudioView: View {
                 .background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 12))
                 .padding(.bottom, 20)
             }
+            // History scrolls beneath the floating glass bar.
             history.frame(maxHeight: .infinity)
-            if session.modifierShortcut.enabled && !session.modifierShortcut.isListening {
-                shortcutPermissionNotice.padding(.top, 16)
-            }
-            if session.settings.pasteWhenFinished && !session.permissions.accessibility {
-                HStack(spacing: 10) {
-                    Text("Allow Accessibility to paste your recordings automatically.")
-                    Spacer(minLength: 8)
-                    Button("Allow Accessibility…", action: session.permissions.resolveAccessibility)
-                        .buttonStyle(.plain).underline().disabled(session.phase.busy)
-                }
-                .font(.system(size: 12)).foregroundStyle(StudioStyle.green).padding(.top, 16)
-            }
-                recordingBar.padding(.top, 16).padding(.bottom, 18)
+                .contentMargins(.bottom, floatingBarHeight, for: .scrollContent)
         }
         .padding(.top, 24)
         .padding(.horizontal, 28)
+        // An overlay, not a safe-area inset: an inset makes the timeline's scroll view demand its full height.
+        .overlay(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                if session.modifierShortcut.enabled && !session.modifierShortcut.isListening {
+                    shortcutPermissionNotice
+                        .padding(.horizontal, 16).padding(.vertical, 12)
+                        .studioGlass(in: RoundedRectangle(cornerRadius: 12))
+                }
+                if session.settings.pasteWhenFinished && !session.permissions.accessibility {
+                    HStack(spacing: 10) {
+                        Text("Allow Accessibility to paste your recordings automatically.")
+                        Spacer(minLength: 8)
+                        Button("Allow Accessibility…", action: session.permissions.resolveAccessibility)
+                            .buttonStyle(.plain).underline().disabled(session.phase.busy)
+                    }
+                    .font(.system(size: 12)).foregroundStyle(StudioStyle.green)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .studioGlass(in: RoundedRectangle(cornerRadius: 12))
+                }
+                recordingBar
+            }
+            .padding(.horizontal, 28).padding(.top, 16).padding(.bottom, 18)
+            .background(alignment: .bottom) {
+                LinearGradient(colors: [StudioStyle.paper.opacity(0), StudioStyle.paper], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 44).allowsHitTesting(false)
+            }
+            .onGeometryChange(for: Double.self) { $0.size.height } action: { floatingBarHeight = $0 }
+        }
     }
 
     private var sidebar: some View {
@@ -281,7 +299,8 @@ public struct StudioView: View {
                     searchFocused = searchVisible
                     if !searchVisible { query = "" }
                 } label: { Image(systemName: searchVisible ? "xmark" : "magnifyingglass") }
-                .buttonStyle(StudioIconButton()).keyboardShortcut("f", modifiers: .command)
+                .buttonStyle(StudioIconButton()).studioGlass(in: Circle(), interactive: true, fallback: .clear)
+                .keyboardShortcut("f", modifiers: .command)
                 .help(searchVisible ? "Close search" : "Search transcripts (⌘F)")
                 .accessibilityLabel(searchVisible ? "Close search" : "Search transcripts")
             }
@@ -309,10 +328,11 @@ public struct StudioView: View {
                         Text("\(filteredRuns.count) results").font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
                     }
                 }
-                .padding(13).background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 9))
+                .padding(13).studioGlass(in: RoundedRectangle(cornerRadius: 9))
             }
             if filteredRuns.isEmpty {
                 emptyHistory.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.bottom, floatingBarHeight)
             } else {
                 RecordingHistoryTimeline(groups: groupedRuns) { run in
                     RecordingHistoryRow(session: session, run: run)
@@ -360,14 +380,16 @@ public struct StudioView: View {
         HStack(spacing: 12) {
             Button(action: session.toggleRecording) {
                 ZStack {
-                    Circle().fill(StudioStyle.green)
                     if session.phase.busy && session.phase != .recording {
                         ProgressView().controlSize(.small).tint(.white).colorScheme(.dark)
                     } else {
                         Image(systemName: session.phase == .recording ? "stop.fill" : "mic")
                             .font(.system(size: 17, weight: .medium)).foregroundStyle(.white)
                     }
-                }.frame(width: 36, height: 36)
+                }
+                .frame(width: 36, height: 36)
+                .studioGlass(in: Circle(), tint: StudioStyle.green, interactive: true)
+                .contentShape(Circle())
             }
             .buttonStyle(.plain).disabled(session.phase.busy && session.phase != .recording)
             .keyboardShortcut("r", modifiers: .command)
@@ -401,7 +423,7 @@ public struct StudioView: View {
                 .help("Import audio (⌘O)").accessibilityLabel("Import audio")
         }
         .foregroundStyle(StudioStyle.green).padding(.horizontal, 14).padding(.vertical, 10)
-        .background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 12))
+        .studioGlass(in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var recordingTitle: String {

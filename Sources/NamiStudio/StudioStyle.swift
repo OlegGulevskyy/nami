@@ -13,6 +13,22 @@ enum StudioStyle {
     static var divider: some View { Rectangle().fill(line).frame(height: 1) }
 }
 
+extension View {
+    /// Liquid Glass on macOS 26 and later; the flat `fallback` fill before that.
+    @ViewBuilder func studioGlass(in shape: some Shape, tint: Color? = nil, interactive: Bool = false,
+                                  fallback: Color = StudioStyle.soft) -> some View {
+        if #available(macOS 26, *) {
+            glassEffect(.regular.tint(tint).interactive(interactive), in: shape)
+        } else {
+            background(tint ?? fallback, in: shape)
+        }
+    }
+
+    @ViewBuilder func studioProminentButton() -> some View {
+        if #available(macOS 26, *) { buttonStyle(.glassProminent) } else { buttonStyle(.borderedProminent) }
+    }
+}
+
 struct StudioSectionHeader: View {
     let title: String
 

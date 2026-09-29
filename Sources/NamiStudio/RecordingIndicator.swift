@@ -83,7 +83,7 @@ private struct SessionRecordingIndicator: View {
     var session: StudioSession
     var body: some View {
         RecordingIndicatorView(phase: session.phase, levels: session.meterHistory, elapsed: session.elapsed,
-                               cleaning: session.isCleaningUp, destination: session.pinnedDestination?.appName,
+                               cleaning: session.isCleaningUp, pasting: session.isPasting, destination: session.pinnedDestination?.appName,
                                notice: session.pinNotice)
     }
 }
@@ -95,15 +95,17 @@ public struct RecordingIndicatorView: View {
     let levels: [Double]
     let elapsed: Double
     let cleaning: Bool
+    let pasting: Bool
     let destination: String?
     let notice: String?
 
     public init(phase: StudioPhase, levels: [Double] = [], elapsed: Double = 0, cleaning: Bool = false,
-                destination: String? = nil, notice: String? = nil) {
+                pasting: Bool = false, destination: String? = nil, notice: String? = nil) {
         self.phase = phase
         self.levels = levels
         self.elapsed = elapsed
         self.cleaning = cleaning
+        self.pasting = pasting
         self.destination = destination
         self.notice = notice
     }
@@ -157,7 +159,7 @@ public struct RecordingIndicatorView: View {
         return switch phase {
         case .preparing: "Getting ready…"
         case .cancelling: "Cancelling…"
-        default: cleaning ? "Cleaning up…" : "Transcribing…"
+        default: pasting ? "Pasting…" : cleaning ? "Cleaning up…" : "Transcribing…"
         }
     }
 }

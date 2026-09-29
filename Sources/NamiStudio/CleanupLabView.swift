@@ -143,7 +143,7 @@ struct CleanupLabView: View {
         }.font(.system(size: 13)).disabled(locked)
     }
     private var compareButton: some View {
-        Button("Run comparison") { lab.compare() }.buttonStyle(.borderedProminent).controlSize(.large)
+        Button("Run comparison") { lab.compare() }.studioProminentButton().controlSize(.large)
             .disabled(locked || lab.loadFailed || lab.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || lab.input.utf8.count > 20_000)
     }
     private func modelOption(_ engine: CleanupEngine, selected: Binding<Bool>) -> some View {
@@ -222,7 +222,7 @@ struct CleanupLabView: View {
             TextEditor(text: $lab.correctedText).font(.system(size: 16)).frame(height: 120)
                 .padding(8).background(.white).disabled(locked).accessibilityLabel("Corrected transcript to remember")
             HStack {
-                Button("Remember correction") { lab.teachCorrection() }.buttonStyle(.borderedProminent).disabled(!lab.canTeach || locked)
+                Button("Remember correction") { lab.teachCorrection() }.studioProminentButton().disabled(!lab.canTeach || locked)
                     .help("Save a personal example for future cleanup. This does not create a global word replacement.")
                 Button("Cancel") { lab.showingCorrectionEditor = false }
             }

@@ -70,6 +70,7 @@ public final class StudioSession {
     public let project: URL
     public private(set) var phase: StudioPhase = .idle
     public private(set) var isCleaningUp = false
+    public private(set) var isPasting = false
     public private(set) var retranscribingRunID: UUID?
     public private(set) var status = "Your next thought starts here."
     public private(set) var errorMessage: String?
@@ -578,7 +579,7 @@ public final class StudioSession {
 
     private func begin(id: UUID? = nil) -> UUID {
         stopPlayback()
-        errorMessage = nil; phase = .preparing; isCleaningUp = false; status = "Preparing the local model…"
+        errorMessage = nil; phase = .preparing; isCleaningUp = false; isPasting = false; status = "Preparing the local model…"
         elapsed = 0; capturedSeconds = 0; level = 0; averageDB = -.infinity
         captureStartSeconds = nil; firstAudioSeconds = nil
         meterHistory = Array(repeating: 0, count: 64)
@@ -683,6 +684,7 @@ public final class StudioSession {
                 timeout: options.cleanupTimeoutSeconds, source: previous == nil ? "Dictation cleanup" : "History retry cleanup")
             try check(id)
             text = processing?.text ?? original
+            isCleaningUp = false
         }
         try check(id)
         if let previous {
@@ -710,10 +712,12 @@ public final class StudioSession {
             // A pin is an explicit request, so it applies even with automatic paste off.
             pinnedDestination = nil
             let copied = options.copyWhenFinished && copyToClipboard(text)
+            isPasting = true
             status = await destination.insert(text).status(app: destination.appName, copied: copied)
         } else {
             let copied = options.copyWhenFinished && copyToClipboard(text)
             if let paste {
+                isPasting = true
                 status = await paste(text, !copied).status(copied: copied)
             } else if copied {
                 status = "Transcript copied. Paste it wherever you need it."
@@ -722,7 +726,7 @@ public final class StudioSession {
             }
         }
         if let processing, !processing.succeeded { status += " Cleanup skipped; original text kept." }
-        isCleaningUp = false
+        isPasting = false
         // Keep the indicator processing until publication and the paste handoff finish.
         phase = .idle
     }
@@ -743,7 +747,7 @@ public final class StudioSession {
 
     private func cleanup(_ id: UUID) {
         guard activeID == id else { return }
-        activeID = nil; operation = nil; ticker?.cancel(); ticker = nil; level = 0; isCleaningUp = false
+        activeID = nil; operation = nil; ticker?.cancel(); ticker = nil; level = 0; isCleaningUp = false; isPasting = false
         retranscribingRunID = nil
         if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }
     }
