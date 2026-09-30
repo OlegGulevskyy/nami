@@ -10,6 +10,7 @@ struct ModelsView: View {
     @State private var error: String?
     @State private var browse = false
     @State private var search = ""
+    @Environment(\.studioPageVisible) private var visible
     private var service: CleanupService { session.cleanupService }
     private var locked: Bool { session.busyForUpdate }
     private enum Deletion: Identifiable {
@@ -91,10 +92,13 @@ struct ModelsView: View {
                 }
             }.padding(28).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
         }
-        .onAppear { session.refreshModels() }
-        .onChange(of: session.debugging.isBusy) { if !session.debugging.isBusy { session.refreshModels() } }
-        .onChange(of: session.settings.modelFolder) { session.refreshModels() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in session.refreshModels() }
+        .onStudioPageVisibility(appear: session.refreshModels)
+        // While hidden, showing the page refreshes instead.
+        .onChange(of: session.debugging.isBusy) { if visible && !session.debugging.isBusy { session.refreshModels() } }
+        .onChange(of: session.settings.modelFolder) { if visible { session.refreshModels() } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if visible { session.refreshModels() }
+        }
         .alert(item: $deletion) { item in
             Alert(title: Text("Delete \(item.title)?"),
                   message: Text("Deletes this model's downloaded files. Recordings and saved corrections stay. A selected dictation model will be disabled. You can download the model again."),

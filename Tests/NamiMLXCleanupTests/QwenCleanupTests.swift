@@ -1,10 +1,17 @@
 import Foundation
 import Testing
 import NamiCore
-import NamiMLXCleanup
+@testable import NamiMLXCleanup
 import MLX
 
 private final class QwenTestBundleMarker: NSObject {}
+
+@Test func thinkingOutputDropsOnlyACompleteReasoningBlock() {
+    #expect(QwenTextProcessor.removingReasoning("<think>\nPick Tuesday.\n</think>\n\nSchedule it for Tuesday.")
+        == "\n\nSchedule it for Tuesday.")
+    #expect(QwenTextProcessor.removingReasoning("<think>Still reasoning") == "<think>Still reasoning")
+    #expect(QwenTextProcessor.removingReasoning("Say </think> literally") == "Say </think> literally")
+}
 
 @Suite(.serialized) struct QwenCleanupTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["NAMI_TEST_QWEN17_CLEANUP"] == "1"))

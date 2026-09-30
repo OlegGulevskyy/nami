@@ -85,6 +85,8 @@ public final class StudioSession {
     public private(set) var meterHistory = Array(repeating: 0.0, count: 64)
     public private(set) var inputName = "System default microphone"
     public private(set) var inputDevices: [AudioInputDevice] = []
+    /// nil when the selected microphone has no settable hardware volume.
+    public private(set) var inputVolume: Double?
     public private(set) var capturedSeconds = 0.0
     public private(set) var averageDB = -Double.infinity
     public private(set) var runs: [RecordingRun] = []
@@ -102,6 +104,7 @@ public final class StudioSession {
     @ObservationIgnored private let engineBuilder: @MainActor (StudioSettings) throws -> any TranscriptionEngine
     @ObservationIgnored private let captureBuilder: @MainActor (String?) -> any AudioCapturing
     @ObservationIgnored private let inputDevicesProvider: @MainActor () -> [AudioInputDevice]
+    @ObservationIgnored private let inputVolumeControl: InputVolumeControl
     @ObservationIgnored private let clipboardWriter: @MainActor (String) -> Bool
     @ObservationIgnored private let pastePreparer: @MainActor () -> PreparedTranscriptPaste
     @ObservationIgnored private let destinationPinner: @MainActor () async -> TranscriptPinAttempt
@@ -135,6 +138,8 @@ public final class StudioSession {
                 modelDirectory: URL? = nil,
                 captureBuilder: @escaping @MainActor (String?) -> any AudioCapturing,
                 inputDevicesProvider: @escaping @MainActor () -> [AudioInputDevice] = { AudioInputDevice.available() },
+                // Unavailable by default: the live control changes the level for every app.
+                inputVolumeControl: InputVolumeControl = .unavailable,
                 clipboardWriter: @escaping @MainActor (String) -> Bool) {
         self.project = project
         self.historyStore = RecordingHistoryStore(directory: historyDirectory ?? RecordingHistoryStore.defaultDirectory)
@@ -159,6 +164,7 @@ public final class StudioSession {
         }
         self.captureBuilder = captureBuilder
         self.inputDevicesProvider = inputDevicesProvider
+        self.inputVolumeControl = inputVolumeControl
         self.clipboardWriter = clipboardWriter
         do {
             try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -208,6 +214,15 @@ public final class StudioSession {
         } else {
             inputName = MicrophoneCapture.defaultDeviceName()
         }
+        inputVolume = selectedMicrophoneUnavailable ? nil : inputVolumeControl.read(settings.microphoneUID)
+    }
+
+    /// Hardware volume is safe to change mid-recording, so this is not gated on the phase.
+    public func setInputVolume(_ volume: Double) {
+        guard inputVolume != nil else { return }
+        let volume = min(1, max(0, volume))
+        inputVolumeControl.write(volume, settings.microphoneUID)
+        inputVolume = volume
     }
 
     public func refreshPermissions() {
@@ -863,3 +878,21 @@ extension StudioSession {
     }
 }
 #endif
+
+/// Reads and writes the selected microphone's hardware volume; a nil UID is the system default.
+public struct InputVolumeControl {
+    public var read: @MainActor (String?) -> Double?
+    public var write: @MainActor (Double, String?) -> Void
+
+    public init(read: @escaping @MainActor (String?) -> Double?, write: @escaping @MainActor (Double, String?) -> Void) {
+        self.read = read
+        self.write = write
+    }
+
+    public static var unavailable: Self { InputVolumeControl(read: { _ in nil }, write: { _, _ in }) }
+    /// Live hardware access for the app only; tests must never pass this.
+    public static var system: Self {
+        InputVolumeControl(read: { AudioInputVolume.volume(deviceUID: $0) },
+                           write: { AudioInputVolume.setVolume($0, deviceUID: $1) })
+    }
+}

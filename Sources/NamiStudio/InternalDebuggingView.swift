@@ -77,14 +77,13 @@ struct InternalDebuggingView: View {
             .frame(maxWidth: 1300, alignment: .topLeading)
             .frame(maxWidth: .infinity)
         }
-        .onAppear {
+        .onStudioPageVisibility(appear: {
             session.stopPlayback()
             if !CommandLine.arguments.contains("--snapshot"), lab.workspace.models.isEmpty,
                !session.settings.modelFolder.isEmpty, session.settings.engine == "whisperkit", !lab.isBusy {
                 lab.addModel(folder: URL(fileURLWithPath: session.settings.modelFolder))
             }
-        }
-        .onDisappear { lab.stopPlayback() }
+        }, disappear: lab.stopPlayback)
         .sheet(isPresented: $showHistory) { historyPicker }
         .confirmationDialog("Compare with ElevenLabs?", isPresented: $confirmCloud, titleVisibility: .visible) {
             Button("Upload and compare") {

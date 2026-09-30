@@ -29,7 +29,9 @@ import NamiAudio
         (.whisper, false, NSSize(width: 1100, height: 900)),
         (.elevenLabs, false, NSSize(width: 1100, height: 900)),
         (.qwen, true, NSSize(width: 1100, height: 900)),
+        (.qwen, false, NSSize(width: 1300, height: 1860)),
         (.qwen, false, NSSize(width: 1100, height: 920)),
+        (.apple, false, NSSize(width: 1300, height: 1880)),
     ] {
         let view = NSHostingView(rootView: PromptsView(studio: studio, store: studio.debugging.promptStore, destination: destination, showingHistory: history)
             .frame(width: size.width, height: size.height).background(StudioStyle.paper)

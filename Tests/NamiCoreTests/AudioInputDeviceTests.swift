@@ -7,3 +7,9 @@ import Testing
         try AudioInputDevice.deviceID(for: "nami-missing-device-" + UUID().uuidString)
     }
 }
+
+@Test func missingMicrophoneHasNoInputVolume() {
+    let uid = "nami-missing-device-" + UUID().uuidString
+    #expect(AudioInputVolume.volume(deviceUID: uid) == nil)
+    #expect(!AudioInputVolume.setVolume(0.5, deviceUID: uid))
+}

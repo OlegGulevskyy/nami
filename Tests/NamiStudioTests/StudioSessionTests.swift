@@ -663,6 +663,39 @@ private func projectDirectory() throws -> URL {
     try await waitUntil { !reopened.phase.busy }
 }
 
+@Test @MainActor func inputVolumeFollowsSelectedMicrophoneAndHidesWhenUnsupported() throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let devices = TestInputDevices()
+    devices.available = [AudioInputDevice(id: "usb-mic", name: "USB microphone"),
+                         AudioInputDevice(id: "fixed-mic", name: "Fixed-level microphone")]
+    var volumes: [String?: Double] = [nil: 0.4, "usb-mic": 0.5]
+    var writes: [(Double, String?)] = []
+    let control = InputVolumeControl(read: { volumes[$0] ?? nil },
+                                     write: { volumes[$1] = $0; writes.append(($0, $1)) })
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { devices.available }, inputVolumeControl: control, clipboardWriter: { _ in true })
+    #expect(session.inputVolume == 0.4)
+
+    session.settings.microphoneUID = "usb-mic"
+    #expect(session.inputVolume == 0.5)
+    session.setInputVolume(1.4)
+    #expect(session.inputVolume == 1)
+    #expect(writes.count == 1 && writes[0].0 == 1 && writes[0].1 == "usb-mic")
+
+    session.settings.microphoneUID = "fixed-mic"
+    #expect(session.inputVolume == nil)
+    session.setInputVolume(0.8)
+    #expect(writes.count == 1)
+
+    session.settings.microphoneUID = "disconnected-mic"
+    #expect(session.inputVolume == nil)
+}
+
+@Test @MainActor func inputVolumeIsHiddenWithoutLiveControl() throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { [] }, clipboardWriter: { _ in true })
+    #expect(session.inputVolume == nil)
+}
+
 @Test @MainActor func failedSettingsSaveReportsErrorWithoutOverwritingConfig() throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, clipboardWriter: { _ in true })

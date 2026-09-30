@@ -13,6 +13,8 @@ final class PromptStore {
     var draftConfiguration = PromptConfiguration()
     var draftPlaygroundVocabulary = ""
     var draftLiveVocabulary: String?
+    /// Draft of the live cleanup deadline, which is stored in Studio settings.
+    var draftCleanupTimeout: Double?
     private(set) var configuration = PromptConfiguration()
     private(set) var playgroundVocabulary = ""
     private(set) var records: [ModelPromptRecord] = []

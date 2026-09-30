@@ -53,8 +53,19 @@ struct PromptsView: View {
             ? Binding(get: { store.draftLiveVocabulary ?? studio.settings.vocabulary }, set: { store.draftLiveVocabulary = $0 })
             : $store.draftPlaygroundVocabulary
     }
+    private var deadline: Binding<Double> {
+        Binding(get: { store.draftCleanupTimeout ?? studio.settings.cleanupTimeoutSeconds },
+                set: { store.draftCleanupTimeout = min(10, max(0.1, $0)); showSaved = false })
+    }
+    private var generationDirty: Bool {
+        destination == .apple ? draft.appleGeneration != store.configuration.appleGeneration
+            : draft.qwenGeneration != store.configuration.qwenGeneration
+    }
     private var dirty: Bool {
-        if destination.isCleanup { return destination.editableFields.contains { draft[$0] != store.configuration[$0] } }
+        if destination.isCleanup {
+            return destination.editableFields.contains { draft[$0] != store.configuration[$0] }
+                || generationDirty || deadline.wrappedValue != studio.settings.cleanupTimeoutSeconds
+        }
         return destination == .whisper && vocabulary.wrappedValue != savedVocabulary
     }
     private var savedVocabulary: String { liveVocabulary ? studio.settings.vocabulary : store.playgroundVocabulary }
@@ -67,6 +78,38 @@ struct PromptsView: View {
                         .init(role: "user", content: CleanupPrompt.input(request, highlightEdits: destination == .qwen))]
         if destination == .apple { messages.append(.init(role: "output field · text", content: previewConfiguration[.appleOutput])) }
         return messages
+    }
+    /// The decoding options passed alongside the messages, named as the model API names them.
+    private var parameterLines: String {
+        let seconds = showSaved ? studio.settings.cleanupTimeoutSeconds : deadline.wrappedValue
+        let none = "none"
+        if destination == .apple {
+            let settings = previewConfiguration.appleGeneration
+            let sampling = switch settings.sampling {
+            case .greedy: "greedy"
+            case .topK: "random(top: \(settings.topK))"
+            case .probabilityThreshold: "random(probabilityThreshold: \(format(settings.probabilityThreshold)))"
+            }
+            return [
+                "samplingMode: \(sampling)",
+                "temperature: \(settings.sampling == .greedy ? "ignored (greedy)" : settings.temperature.map(format) ?? "Apple default")",
+                "seed: \(settings.sampling == .greedy ? "ignored (greedy)" : settings.seed.map(String.init) ?? none)",
+                "maximumResponseTokens: \(settings.maxOutputTokens)",
+                "deadline: \(format(seconds)) s",
+            ].joined(separator: "\n")
+        }
+        let settings = previewConfiguration.qwenGeneration
+        let sampled = settings.temperature > 0
+        return [
+            "enable_thinking: \(settings.thinking)",
+            "temperature: \(format(settings.temperature))\(sampled ? "" : " (always the most likely token)")",
+            "top_p: \(format(settings.topP))\(sampled ? "" : " (ignored at temperature 0)")",
+            "seed: \(sampled ? settings.seed.map(String.init) ?? "random" : "ignored at temperature 0")",
+            "repetition_penalty: \(settings.repetitionPenalty.map(format) ?? none)",
+            "repetition_context_size: \(settings.repetitionPenalty == nil ? "unused" : String(settings.repetitionContextSize))",
+            "max_tokens: \(settings.maxOutputTokens)",
+            "deadline: \(format(seconds)) s",
+        ].joined(separator: "\n")
     }
     private var records: [ModelPromptRecord] { store.records.filter(destination.includes) }
     private var record: ModelPromptRecord? { records.first { $0.id == selectedRecordID } ?? records.first }
@@ -88,11 +131,12 @@ struct PromptsView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear {
+        .onStudioPageVisibility(appear: {
             if store.draftLiveVocabulary == nil { store.draftLiveVocabulary = studio.settings.vocabulary }
+            if store.draftCleanupTimeout == nil { store.draftCleanupTimeout = studio.settings.cleanupTimeoutSeconds }
             language = studio.debugging.cleanupLab.language
             useMemory = studio.debugging.cleanupLab.useMemory
-        }
+        })
         .onChange(of: destination) { _, _ in showSaved = false; saved = false; selectedRecordID = nil }
         .onChange(of: dirty) { _, dirty in if dirty { saved = false; showSaved = false } }
     }
@@ -171,7 +215,7 @@ struct PromptsView: View {
     }
 
     private var editorPanel: some View {
-        panel(title: destination.isCleanup ? "Edit cleanup prompts" : "Transcription input", icon: "pencil", trailing: destination == .elevenLabs ? "Audio only" : "Editable") {
+        panel(title: destination.isCleanup ? "Edit cleanup request" : "Transcription input", icon: "pencil", trailing: destination == .elevenLabs ? "Audio only" : "Editable") {
             if destination.isCleanup { cleanupEditor }
             else if destination == .whisper { whisperEditor }
             else { cloudExplanation }
@@ -187,6 +231,8 @@ struct PromptsView: View {
                 variable("context", help: "Relevant saved corrections. Empty when none apply.")
                 variable("language", help: "The selected language code.")
             }
+            StudioStyle.divider
+            generationEditor
             StudioStyle.divider
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
@@ -219,6 +265,151 @@ struct PromptsView: View {
             }.font(.system(size: 12, weight: .medium))
         }
     }
+
+    private var generationEditor: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Generation settings").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button("Reset") {
+                    if destination == .apple { draft.appleGeneration = .init() } else { draft.qwenGeneration = .init() }
+                    deadline.wrappedValue = StudioSettings().cleanupTimeoutSeconds
+                }
+                .font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(StudioStyle.green)
+                .disabled(generationIsDefault).help("Restore the default generation settings. Save to apply.")
+            }
+            Text("Sent with every request to \(destination.title), next to the messages.")
+                .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+            if destination == .apple { appleGeneration } else { qwenGeneration }
+            parameterRow("Deadline", detail: "Seconds before Nami gives up and keeps the original. Shared by both cleanup models.") {
+                numberField("Deadline", value: deadline, step: 0.5, range: 0.1...10, suffix: "s")
+            }
+        }
+    }
+
+    private var generationIsDefault: Bool {
+        (destination == .apple ? draft.appleGeneration == .init() : draft.qwenGeneration == .init())
+            && deadline.wrappedValue == StudioSettings().cleanupTimeoutSeconds
+    }
+
+    @ViewBuilder private var qwenGeneration: some View {
+        let sampled = draft.qwenGeneration.temperature > 0
+        parameterRow("Thinking", detail: "Qwen reasons before answering. Much slower, so raise the deadline too.") {
+            Toggle("Thinking", isOn: qwen(\.thinking)).labelsHidden().toggleStyle(.checkbox)
+        }
+        parameterRow("Temperature", detail: "0 always picks the most likely word, so a retry gives the same result. Higher values vary the wording.") {
+            numberField("Temperature", value: qwen(\.temperature), step: 0.1, range: 0...2)
+        }
+        parameterRow("Top-p", detail: "Samples only from the most likely words that add up to this share. Needs temperature above 0.") {
+            numberField("Top-p", value: qwen(\.topP), step: 0.05, range: 0.01...1)
+        }.disabled(!sampled)
+        parameterRow("Seed", detail: "Repeats the same sampled result. Needs temperature above 0.") {
+            optionalSeed(qwen(\.seed))
+        }.disabled(!sampled)
+        parameterRow("Repetition penalty", detail: "Discourages words the model used in its recent output. 1 has no effect.") {
+            HStack(spacing: 8) {
+                Toggle("Repetition penalty", isOn: Binding(get: { draft.qwenGeneration.repetitionPenalty != nil },
+                    set: { draft.qwenGeneration.repetitionPenalty = $0 ? 1.1 : nil; showSaved = false })).labelsHidden().toggleStyle(.checkbox)
+                numberField("Repetition penalty", value: Binding(get: { draft.qwenGeneration.repetitionPenalty ?? 1 },
+                    set: { draft.qwenGeneration.repetitionPenalty = $0; draft.qwenGeneration = draft.qwenGeneration.clamped; showSaved = false }),
+                    step: 0.05, range: 1...2).disabled(draft.qwenGeneration.repetitionPenalty == nil)
+            }
+        }
+        if draft.qwenGeneration.repetitionPenalty != nil {
+            parameterRow("Penalty window", detail: "How many recent output tokens the penalty looks at.") {
+                numberField("Penalty window", value: qwenInt(\.repetitionContextSize), step: 10, range: 1...512, suffix: "tokens")
+            }
+        }
+        parameterRow("Maximum output", detail: "Nami keeps the original if the model reaches this before finishing.") {
+            numberField("Maximum output tokens", value: qwenInt(\.maxOutputTokens), step: 256, range: 16...8_192, suffix: "tokens")
+        }
+    }
+
+    @ViewBuilder private var appleGeneration: some View {
+        let sampling = draft.appleGeneration.sampling
+        parameterRow("Sampling", detail: "Greedy always picks the most likely word, so a retry gives the same result.") {
+            Picker("Sampling", selection: apple(\.sampling)) {
+                ForEach(AppleGenerationSettings.Sampling.allCases, id: \.self) { Text($0.title).tag($0) }
+            }.labelsHidden().pickerStyle(.segmented).fixedSize()
+        }
+        if sampling == .topK {
+            parameterRow("Top-k", detail: "Samples from this many of the most likely words.") {
+                numberField("Top-k", value: appleInt(\.topK), step: 5, range: 1...500)
+            }
+        }
+        if sampling == .probabilityThreshold {
+            parameterRow("Top-p", detail: "Samples only from the most likely words that add up to this share.") {
+                numberField("Top-p", value: apple(\.probabilityThreshold), step: 0.05, range: 0.01...1)
+            }
+        }
+        parameterRow("Temperature", detail: "Higher values vary the wording. Unchecked lets Apple choose. Ignored by greedy sampling.") {
+            HStack(spacing: 8) {
+                Toggle("Custom temperature", isOn: Binding(get: { draft.appleGeneration.temperature != nil },
+                    set: { draft.appleGeneration.temperature = $0 ? 0.7 : nil; showSaved = false })).labelsHidden().toggleStyle(.checkbox)
+                numberField("Temperature", value: Binding(get: { draft.appleGeneration.temperature ?? 0.7 },
+                    set: { draft.appleGeneration.temperature = $0; draft.appleGeneration = draft.appleGeneration.clamped; showSaved = false }),
+                    step: 0.1, range: 0...2).disabled(draft.appleGeneration.temperature == nil)
+            }
+        }.disabled(sampling == .greedy)
+        parameterRow("Seed", detail: "Repeats the same sampled result. Ignored by greedy sampling.") {
+            optionalSeed(apple(\.seed))
+        }.disabled(sampling == .greedy)
+        parameterRow("Maximum output", detail: "Nami keeps the original if the model reaches this before finishing.") {
+            numberField("Maximum output tokens", value: appleInt(\.maxOutputTokens), step: 256, range: 16...8_192, suffix: "tokens")
+        }
+    }
+
+    private func qwen<Value>(_ keyPath: WritableKeyPath<QwenGenerationSettings, Value>) -> Binding<Value> {
+        Binding(get: { draft.qwenGeneration[keyPath: keyPath] },
+                set: { draft.qwenGeneration[keyPath: keyPath] = $0; draft.qwenGeneration = draft.qwenGeneration.clamped; showSaved = false })
+    }
+    private func apple<Value>(_ keyPath: WritableKeyPath<AppleGenerationSettings, Value>) -> Binding<Value> {
+        Binding(get: { draft.appleGeneration[keyPath: keyPath] },
+                set: { draft.appleGeneration[keyPath: keyPath] = $0; draft.appleGeneration = draft.appleGeneration.clamped; showSaved = false })
+    }
+    private func qwenInt(_ keyPath: WritableKeyPath<QwenGenerationSettings, Int>) -> Binding<Double> {
+        let value = qwen(keyPath)
+        return Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Int($0.rounded()) })
+    }
+    private func appleInt(_ keyPath: WritableKeyPath<AppleGenerationSettings, Int>) -> Binding<Double> {
+        let value = apple(keyPath)
+        return Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Int($0.rounded()) })
+    }
+
+    private func parameterRow<Control: View>(_ title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 12, weight: .medium))
+                Text(detail).font(.system(size: 11)).foregroundStyle(StudioStyle.quiet).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            control()
+        }
+    }
+
+    private func numberField(_ label: String, value: Binding<Double>, step: Double, range: ClosedRange<Double>, suffix: String? = nil) -> some View {
+        HStack(spacing: 4) {
+            TextField(label, value: value, format: .number.precision(.fractionLength(0...2)).grouping(.never))
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 64)
+                .font(.system(size: 12, design: .monospaced)).accessibilityLabel(label)
+            Stepper(label, value: value, in: range, step: step).labelsHidden()
+            if let suffix { Text(suffix).font(.system(size: 11)).foregroundStyle(StudioStyle.quiet) }
+        }
+    }
+
+    private func optionalSeed(_ seed: Binding<UInt64?>) -> some View {
+        HStack(spacing: 8) {
+            Toggle("Fixed seed", isOn: Binding(get: { seed.wrappedValue != nil }, set: { seed.wrappedValue = $0 ? 42 : nil }))
+                .labelsHidden().toggleStyle(.checkbox)
+            TextField("Seed", value: Binding(get: { seed.wrappedValue ?? 42 }, set: { seed.wrappedValue = $0 }),
+                      format: .number.grouping(.never))
+                .textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing).frame(width: 90)
+                .font(.system(size: 12, design: .monospaced)).accessibilityLabel("Seed")
+                .disabled(seed.wrappedValue == nil)
+        }
+    }
+
+    private func format(_ value: Double) -> String { QwenGenerationSettings.format(value) }
 
     private var whisperEditor: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -264,6 +455,7 @@ struct PromptsView: View {
                     ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
                         messageBlock(message.role, content: message.content, number: index + 1)
                     }
+                    messageBlock("parameters", content: parameterLines, number: messages.count + 1)
                     Text("Preview only · no model is called. Uses the sample transcript and correction toggle on the left.")
                         .font(.system(size: 11)).foregroundStyle(StudioStyle.quiet)
                 } else {
@@ -284,12 +476,12 @@ struct PromptsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(dirty ? "You have unsaved changes" : saved ? "Saved for future requests" : "You’re viewing saved settings")
                     .font(.system(size: 12, weight: .medium))
-                Text(destination.isCleanup ? "Cleanup edits apply to live dictation, retries and Playground." : liveVocabulary ? "Applies to live dictation, audio imports and retries." : "Applies to Playground transcription only.")
+                Text(destination.isCleanup ? "Cleanup edits apply to live dictation, retries and Playground. The deadline applies to live dictation and retries." : liveVocabulary ? "Applies to live dictation, audio imports and retries." : "Applies to Playground transcription only.")
                     .font(.system(size: 11)).foregroundStyle(StudioStyle.quiet)
             }
             Spacer(minLength: 8)
             Button("Discard") { discard() }.disabled(!dirty)
-            Button(destination.isCleanup ? "Save cleanup prompts" : "Save vocabulary") { save() }
+            Button(destination.isCleanup ? "Save cleanup settings" : "Save vocabulary") { save() }
                 .studioProminentButton().tint(StudioStyle.green).disabled(!dirty || store.loadFailed)
         }.padding(.top, 2)
     }
@@ -298,7 +490,9 @@ struct PromptsView: View {
         if destination.isCleanup {
             var config = store.configuration
             for field in destination.editableFields { config[field] = draft[field] }
+            if destination == .apple { config.appleGeneration = draft.appleGeneration } else { config.qwenGeneration = draft.qwenGeneration }
             saved = store.save(configuration: config, playgroundVocabulary: store.playgroundVocabulary)
+            if saved { studio.settings.cleanupTimeoutSeconds = deadline.wrappedValue }
         } else if liveVocabulary {
             studio.settings.vocabulary = vocabulary.wrappedValue
             saved = true
@@ -310,6 +504,9 @@ struct PromptsView: View {
     private func discard() {
         if destination.isCleanup {
             for field in destination.editableFields { draft[field] = store.configuration[field] }
+            if destination == .apple { draft.appleGeneration = store.configuration.appleGeneration }
+            else { draft.qwenGeneration = store.configuration.qwenGeneration }
+            store.draftCleanupTimeout = studio.settings.cleanupTimeoutSeconds
         } else { vocabulary.wrappedValue = savedVocabulary }
         saved = false
     }

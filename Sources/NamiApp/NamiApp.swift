@@ -39,6 +39,7 @@ struct NamiApp: App {
                                     permissions: previewPermissions, pastePreparer: StudioSession.systemPastePreparer,
                                     destinationPinner: StudioSession.systemDestinationPinner,
                                     captureBuilder: StudioSession.systemCapture,
+                                    inputVolumeControl: snapshot ? InputVolumeControl(read: { _ in 0.6 }, write: { _, _ in }) : .system,
                                     clipboardWriter: { snapshot || StudioSession.systemClipboardWriter($0) })
         _session = State(initialValue: session)
         session.updates = AppUpdates(disabled: args.contains("--snapshot"), isBusy: { [weak session] in

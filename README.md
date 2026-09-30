@@ -55,9 +55,13 @@ type; switch between **Your draft** and **Currently saved** to compare them.
 Cleanup shows the system prompt, user message template, and sample transcript.
 The system prompt belongs to the selected model; the user template is shared by
 Qwen and Apple. Advanced settings contain saved-correction templates and Apple's
-output-field instructions. **Save cleanup prompts** applies the selected model's
-edits and shared templates to future requests, including live dictation and retries.
-**Reset** restores an individual field's default in the draft; save to apply it.
+output-field instructions. **Generation settings** holds the decoding options sent
+with each request: Qwen's thinking, temperature, top-p, seed, repetition penalty and
+maximum output; Apple's sampling mode, temperature, seed and maximum output; and
+the cleanup deadline shared by both. The preview lists these parameters under the
+messages. **Save cleanup settings** applies the selected model's edits, generation
+settings and shared templates to future requests, including live dictation and
+retries. **Reset** restores a field's default in the draft; save to apply it.
 
 Under **Transcription → Whisper**, choose **Live dictation** or **Playground**,
 edit vocabulary hints, then click **Save vocabulary**. Whisper has no system prompt.

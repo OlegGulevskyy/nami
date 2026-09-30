@@ -43,9 +43,132 @@ public enum PromptField: String, CaseIterable, Codable, Sendable, Identifiable {
     }
 }
 
+/// Decoding parameters sent with every Qwen cleanup request (MLX `GenerateParameters`).
+public struct QwenGenerationSettings: Codable, Equatable, Sendable {
+    public var thinking = false
+    /// 0 selects the most likely token every time (deterministic).
+    public var temperature = 0.0
+    /// Only applies when temperature is above 0 and the value is below 1.
+    public var topP = 1.0
+    public var repetitionPenalty: Double?
+    public var repetitionContextSize = 20
+    public var maxOutputTokens = 2_048
+    /// Only applies when temperature is above 0.
+    public var seed: UInt64?
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        thinking = try values.decodeIfPresent(Bool.self, forKey: .thinking) ?? thinking
+        temperature = try values.decodeIfPresent(Double.self, forKey: .temperature) ?? temperature
+        topP = try values.decodeIfPresent(Double.self, forKey: .topP) ?? topP
+        repetitionPenalty = try values.decodeIfPresent(Double.self, forKey: .repetitionPenalty)
+        repetitionContextSize = try values.decodeIfPresent(Int.self, forKey: .repetitionContextSize) ?? repetitionContextSize
+        maxOutputTokens = try values.decodeIfPresent(Int.self, forKey: .maxOutputTokens) ?? maxOutputTokens
+        seed = try values.decodeIfPresent(UInt64.self, forKey: .seed)
+        self = clamped
+    }
+
+    public var clamped: Self {
+        var value = self
+        value.temperature = Self.clamp(temperature, 0...2, fallback: 0)
+        value.topP = Self.clamp(topP, 0.01...1, fallback: 1)
+        value.repetitionPenalty = repetitionPenalty.map { Self.clamp($0, 1...2, fallback: 1) }
+        value.repetitionContextSize = min(512, max(1, repetitionContextSize))
+        value.maxOutputTokens = min(8_192, max(16, maxOutputTokens))
+        return value
+    }
+
+    public var summary: String {
+        var parts = [thinking ? "Thinking enabled" : "Thinking disabled", "temperature \(Self.format(temperature))"]
+        if temperature > 0 {
+            if topP < 1 { parts.append("top-p \(Self.format(topP))") }
+            parts.append(seed.map { "seed \($0)" } ?? "random seed")
+        }
+        if let repetitionPenalty { parts.append("repetition penalty \(Self.format(repetitionPenalty)) over \(repetitionContextSize) tokens") }
+        parts.append("maximum \(Self.format(maxOutputTokens)) output tokens")
+        return parts.joined(separator: " · ")
+    }
+
+    static func clamp(_ value: Double, _ range: ClosedRange<Double>, fallback: Double) -> Double {
+        value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
+    }
+    /// Request details read like API values on every Mac, whatever its number format.
+    public static func format(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0...2)).locale(english)) }
+    public static func format(_ value: Int) -> String { value.formatted(.number.locale(english)) }
+    private static let english = Locale(identifier: "en_US")
+}
+
+/// Generation options sent with every Apple Intelligence cleanup request (`GenerationOptions`).
+public struct AppleGenerationSettings: Codable, Equatable, Sendable {
+    public enum Sampling: String, Codable, CaseIterable, Sendable {
+        case greedy, topK, probabilityThreshold
+        public var title: String {
+            switch self {
+            case .greedy: "Greedy"
+            case .topK: "Top-k"
+            case .probabilityThreshold: "Top-p"
+            }
+        }
+    }
+    public var sampling = Sampling.greedy
+    public var topK = 40
+    public var probabilityThreshold = 0.9
+    /// nil lets Apple choose. Ignored by greedy sampling.
+    public var temperature: Double?
+    public var seed: UInt64?
+    public var maxOutputTokens = 2_048
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        sampling = try values.decodeIfPresent(Sampling.self, forKey: .sampling) ?? sampling
+        topK = try values.decodeIfPresent(Int.self, forKey: .topK) ?? topK
+        probabilityThreshold = try values.decodeIfPresent(Double.self, forKey: .probabilityThreshold) ?? probabilityThreshold
+        temperature = try values.decodeIfPresent(Double.self, forKey: .temperature)
+        seed = try values.decodeIfPresent(UInt64.self, forKey: .seed)
+        maxOutputTokens = try values.decodeIfPresent(Int.self, forKey: .maxOutputTokens) ?? maxOutputTokens
+        self = clamped
+    }
+
+    public var clamped: Self {
+        var value = self
+        value.topK = min(500, max(1, topK))
+        value.probabilityThreshold = QwenGenerationSettings.clamp(probabilityThreshold, 0.01...1, fallback: 0.9)
+        value.temperature = temperature.map { QwenGenerationSettings.clamp($0, 0...2, fallback: 1) }
+        value.maxOutputTokens = min(8_192, max(16, maxOutputTokens))
+        return value
+    }
+
+    public var summary: String {
+        var parts: [String]
+        switch sampling {
+        case .greedy: parts = ["greedy"]
+        case .topK: parts = ["top-k \(topK)"]
+        case .probabilityThreshold: parts = ["top-p \(QwenGenerationSettings.format(probabilityThreshold))"]
+        }
+        if sampling != .greedy {
+            parts.append(temperature.map { "temperature \(QwenGenerationSettings.format($0))" } ?? "default temperature")
+            parts.append(seed.map { "seed \($0)" } ?? "random seed")
+        }
+        parts.append("maximum \(QwenGenerationSettings.format(maxOutputTokens)) output tokens")
+        return parts.joined(separator: " · ")
+    }
+}
+
 public struct PromptConfiguration: Codable, Equatable, Sendable {
     private var overrides: [String: String] = [:]
+    public var qwenGeneration = QwenGenerationSettings()
+    public var appleGeneration = AppleGenerationSettings()
     public init() {}
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        overrides = try values.decodeIfPresent([String: String].self, forKey: .overrides) ?? [:]
+        qwenGeneration = try values.decodeIfPresent(QwenGenerationSettings.self, forKey: .qwenGeneration) ?? .init()
+        appleGeneration = try values.decodeIfPresent(AppleGenerationSettings.self, forKey: .appleGeneration) ?? .init()
+    }
     public subscript(_ field: PromptField) -> String {
         get { overrides[field.rawValue] ?? field.defaultText }
         set { overrides[field.rawValue] = newValue == field.defaultText ? nil : newValue }

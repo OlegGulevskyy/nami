@@ -36,7 +36,7 @@ struct CleanupLabView: View {
             }
             .padding(28).frame(maxWidth: 1300, alignment: .topLeading).frame(maxWidth: .infinity)
         }
-        .onAppear { service.refreshAvailability() }
+        .onStudioPageVisibility(appear: service.refreshAvailability)
         .onChange(of: lab.compareApple) { lab.savePreferences() }
         .onChange(of: lab.compareQwen) { lab.savePreferences() }
         .onChange(of: lab.compareQwen17) { lab.savePreferences() }

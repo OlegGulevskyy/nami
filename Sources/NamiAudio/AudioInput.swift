@@ -121,13 +121,7 @@ public final class MicrophoneCapture: AudioCapturing {
     public init(deviceUID: String? = nil) { self.deviceUID = deviceUID }
 
     public static func defaultDeviceName() -> String {
-        var device = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr else {
-            return "System default microphone"
-        }
+        guard let device = AudioInputDevice.defaultDeviceID() else { return "System default microphone" }
         return name(of: device)
     }
 

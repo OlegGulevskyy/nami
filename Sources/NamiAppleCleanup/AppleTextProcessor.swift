@@ -68,10 +68,17 @@ private actor AppleTextProcessor: TextProcessor {
         let session = (instructions == CleanupPrompt.instructions ? preparedSession : nil)
             ?? LanguageModelSession(model: model, instructions: instructions)
         preparedSession = nil // Never accumulate conversations or other dictations in model context.
+        let settings = request.prompts.appleGeneration.clamped
+        let sampling: GenerationOptions.SamplingMode = switch settings.sampling {
+        case .greedy: .greedy
+        case .topK: .random(top: settings.topK, seed: settings.seed)
+        case .probabilityThreshold: .random(probabilityThreshold: settings.probabilityThreshold, seed: settings.seed)
+        }
+        let temperature = settings.sampling == .greedy ? nil : settings.temperature
         #if compiler(>=6.4)
-        let options = GenerationOptions(samplingMode: .greedy, maximumResponseTokens: 2_048)
+        let options = GenerationOptions(samplingMode: sampling, temperature: temperature, maximumResponseTokens: settings.maxOutputTokens)
         #else
-        let options = GenerationOptions(sampling: .greedy, maximumResponseTokens: 2_048)
+        let options = GenerationOptions(sampling: sampling, temperature: temperature, maximumResponseTokens: settings.maxOutputTokens)
         #endif
         do {
             let input = CleanupPrompt.input(request)
@@ -82,7 +89,7 @@ private actor AppleTextProcessor: TextProcessor {
             await request.promptObserver?(.init(requestID: request.id, provider: identifier, messages: [
                 .init(role: "system", content: instructions), .init(role: "user", content: input),
                 .init(role: "schema · text field", content: guide),
-            ], details: "EditedTranscript { text: String } · greedy · maximum 2,048 output tokens. Apple manages its internal system instructions."))
+            ], details: "EditedTranscript { text: String } · \(settings.summary). Apple manages its internal system instructions."))
             try Task.checkCancellation()
             let response = try await session.respond(to: input, schema: schema, options: options)
             try Task.checkCancellation()

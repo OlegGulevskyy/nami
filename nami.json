@@ -5,7 +5,7 @@
   "studio" : {
     "audioDirectory" : "/Users/oleggulevskyy/Documents/dev/nami/evaluation/audio",
     "cleanupEnabled" : true,
-    "cleanupEngine" : "qwen",
+    "cleanupEngine" : "qwen17",
     "cleanupTimeoutSeconds" : 10,
     "cleanupUseMemory" : true,
     "copyWhenFinished" : false,

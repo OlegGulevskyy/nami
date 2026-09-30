@@ -54,6 +54,7 @@ public actor QwenTextProcessor: TextProcessor {
         try await prepare()
         guard let container else { throw CleanupFailure.unavailable("Qwen could not load.") }
         let identifier = self.identifier
+        let settings = request.prompts.qwenGeneration.clamped
         return try await container.perform { context in
             try Task.checkCancellation()
             let messages = [
@@ -62,21 +63,33 @@ public actor QwenTextProcessor: TextProcessor {
             ]
             let input = try await context.processor.prepare(input: UserInput(
                 messages: messages.map { ["role": $0.role, "content": $0.content] },
-                additionalContext: ["enable_thinking": false]))
+                additionalContext: ["enable_thinking": settings.thinking]))
             await request.promptObserver?(.init(requestID: request.id, provider: identifier,
-                messages: messages, details: "Thinking disabled · temperature 0 · maximum 2,048 output tokens"))
+                messages: messages, details: settings.summary))
             try Task.checkCancellation()
+            if settings.temperature > 0, let seed = settings.seed { MLXRandom.seed(seed) }
             // Keep iteration inside this operation until MLX really stops. This
             // lets CleanupRunner bound outstanding GPU work even after a timeout;
             // the stream convenience API finishes its consumer before its task joins.
-            let result = try MLXLMCommon.generate(input: input,
-                parameters: GenerateParameters(maxTokens: 2_048, temperature: 0), context: context) { (_: [Int]) in
+            let parameters = GenerateParameters(maxTokens: settings.maxOutputTokens, temperature: Float(settings.temperature),
+                topP: Float(settings.topP), repetitionPenalty: settings.repetitionPenalty.map(Float.init),
+                repetitionContextSize: settings.repetitionContextSize)
+            let result = try MLXLMCommon.generate(input: input, parameters: parameters, context: context) { (_: [Int]) in
                     Task.isCancelled ? .stop : .more
                 }
             try Task.checkCancellation()
-            guard result.tokens.count < 2_048 else { throw CleanupFailure.outputLimitReached }
-            return CleanupOutput.removingStringEnvelope(result.output, original: request.rawText)
+            guard result.tokens.count < settings.maxOutputTokens else { throw CleanupFailure.outputLimitReached }
+            let output = settings.thinking ? Self.removingReasoning(result.output) : result.output
+            return CleanupOutput.removingStringEnvelope(output, original: request.rawText)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
+    }
+
+    /// Thinking output starts with a reasoning block. Drop only a complete one;
+    /// an unfinished block stays so the format check rejects it.
+    static func removingReasoning(_ output: String) -> String {
+        let text = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("<think>"), let end = text.range(of: "</think>") else { return output }
+        return String(text[end.upperBound...])
     }
 }

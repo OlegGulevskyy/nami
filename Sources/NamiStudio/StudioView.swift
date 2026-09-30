@@ -53,6 +53,7 @@ public struct StudioView: View {
     @State private var resizingSidebar = false
     @FocusState private var searchFocused: Bool
     @State private var floatingBarHeight = 0.0
+    @State private var builtPages: Set<Page> = []
 
     public init(session: StudioSession, page: Binding<Page>) {
         self.session = session
@@ -103,25 +104,30 @@ public struct StudioView: View {
             VStack(spacing: 0) {
                 header
                 StudioStyle.divider
-                if page == .debugging {
-                    InternalDebuggingView(session: session, lab: session.debugging)
-                } else if let settingsPage = page.settingsPage {
-                    StudioSettingsView(session: session, page: settingsPage)
-                        .id(settingsPage)
-                } else {
-                    recordingHistory
-                        .disabled(session.permissions.needsSetup)
-                        .allowsHitTesting(!session.permissions.needsSetup)
-                        .accessibilityHidden(session.permissions.needsSetup)
-                        .blur(radius: session.permissions.needsSetup ? 7 : 0)
-                        .overlay {
-                            if session.permissions.needsSetup {
-                                ZStack {
-                                    StudioStyle.paper.opacity(0.4).contentShape(Rectangle()).onTapGesture {}
-                                    PermissionSetupView(permissions: session.permissions, recheck: recheckPermissions)
-                                }
-                            }
-                        }
+                // Pages stay built and are only hidden, so switching pages does
+                // not rebuild and re-measure a whole page each time.
+                ZStack {
+                    ForEach(Page.allCases.filter { $0 == page || builtPages.contains($0) }, id: \.self) { item in
+                        let visible = item == page
+                        pageContent(item)
+                            .opacity(visible ? 1 : 0)
+                            .allowsHitTesting(visible)
+                            .accessibilityHidden(!visible)
+                            // Also turns off a hidden page's keyboard shortcuts and focus.
+                            .disabled(!visible)
+                            .environment(\.studioPageVisible, visible)
+                            .zIndex(visible ? 1 : 0)
+                    }
+                }
+                .onChange(of: page, initial: true) { builtPages.insert(page) }
+                // A hidden page must not keep typing focus.
+                .onChange(of: page) { NSApp.keyWindow?.makeFirstResponder(nil) }
+                .task {
+                    // Build the other pages one at a time while idle, so even a first visit is instant.
+                    for item in Page.allCases {
+                        do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+                        builtPages.insert(item)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -152,6 +158,28 @@ public struct StudioView: View {
             else if page != .history { page = .history }
             else if searchVisible { query = ""; searchVisible = false }
             else { session.cancel() }
+        }
+    }
+
+    @ViewBuilder private func pageContent(_ item: Page) -> some View {
+        if item == .debugging {
+            InternalDebuggingView(session: session, lab: session.debugging)
+        } else if let settingsPage = item.settingsPage {
+            StudioSettingsView(session: session, page: settingsPage)
+        } else {
+            recordingHistory
+                .disabled(session.permissions.needsSetup)
+                .allowsHitTesting(!session.permissions.needsSetup)
+                .accessibilityHidden(session.permissions.needsSetup)
+                .blur(radius: session.permissions.needsSetup ? 7 : 0)
+                .overlay {
+                    if session.permissions.needsSetup {
+                        ZStack {
+                            StudioStyle.paper.opacity(0.4).contentShape(Rectangle()).onTapGesture {}
+                            PermissionSetupView(permissions: session.permissions, recheck: recheckPermissions)
+                        }
+                    }
+                }
         }
     }
 
@@ -586,5 +614,31 @@ private struct RecordingHistoryRow: View {
                     .help("Delete")
             }
         }
+    }
+}
+
+extension EnvironmentValues {
+    /// False while StudioView keeps a visited page built but hidden.
+    @Entry var studioPageVisible = true
+}
+
+extension View {
+    /// `onAppear`/`onDisappear` for page content StudioView keeps alive while hidden:
+    /// also runs when the page is shown or hidden again.
+    func onStudioPageVisibility(appear: @escaping () -> Void, disappear: @escaping () -> Void = {}) -> some View {
+        modifier(StudioPageVisibility(appear: appear, disappear: disappear))
+    }
+}
+
+private struct StudioPageVisibility: ViewModifier {
+    let appear: () -> Void
+    let disappear: () -> Void
+    @Environment(\.studioPageVisible) private var visible
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { if visible { appear() } }
+            .onDisappear { if visible { disappear() } }
+            .onChange(of: visible) { _, visible in visible ? appear() : disappear() }
     }
 }

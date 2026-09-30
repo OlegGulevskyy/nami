@@ -11,7 +11,9 @@ public struct StudioSettingsView: View {
     @Bindable private var session: StudioSession
     @Bindable private var modifierShortcut: ModifierRecordingShortcut
     private let page: Page
-    @State private var loginStatus = SMAppService.mainApp.status
+    /// Read off the main thread: the status is a synchronous XPC call.
+    @State private var loginStatus: SMAppService.Status?
+    @Environment(\.studioPageVisible) private var visible
     @State private var loginError: String?
 
     public init(session: StudioSession, page: Page = .general) {
@@ -47,12 +49,9 @@ public struct StudioSettingsView: View {
             }
         }
         .font(.system(size: 15)).foregroundStyle(StudioStyle.ink)
-        .onAppear {
-            session.refreshInput(); session.modifierShortcut.refresh()
-        }
+        .onStudioPageVisibility(appear: refresh)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            session.refreshInput(); session.modifierShortcut.refresh()
-            loginStatus = SMAppService.mainApp.status
+            if visible { refresh() }
         }
     }
 
@@ -78,6 +77,18 @@ public struct StudioSettingsView: View {
                         .preferenceMenu().accessibilityLabel("Microphone: \(session.inputName)")
                 }
             }.disabled(session.phase.busy)
+            if let volume = session.inputVolume {
+                row("Input volume", subtitle: "Also changes this microphone's level in other apps.") {
+                    HStack(spacing: 10) {
+                        Image(systemName: "mic").font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+                        Slider(value: Binding(get: { volume }, set: { session.setInputVolume($0) }), in: 0...1)
+                            .frame(width: 180).tint(StudioStyle.green)
+                            .accessibilityLabel("Input volume")
+                        Text("\(Int((volume * 100).rounded()))%").font(.system(size: 13).monospacedDigit())
+                            .foregroundStyle(StudioStyle.quiet).frame(width: 40, alignment: .trailing)
+                    }
+                }
+            }
         }
         section("Transcription") {
             row("Language") {
@@ -428,6 +439,17 @@ public struct StudioSettingsView: View {
     private func openSoundSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") { NSWorkspace.shared.open(url) }
     }
+    /// Only what this page shows, so switching to it stays quick.
+    private func refresh() {
+        switch page {
+        case .general:
+            session.refreshInput()
+            Task { loginStatus = await Task.detached { SMAppService.mainApp.status }.value }
+        case .shortcuts: session.modifierShortcut.refresh()
+        case .model, .about: break
+        }
+    }
+
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled { try SMAppService.mainApp.register() }

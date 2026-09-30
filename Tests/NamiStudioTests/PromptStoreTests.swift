@@ -57,6 +57,25 @@ private actor PromptProbeProcessor: TextProcessor {
     #expect(await qwen.requests.last?.prompts[.qwenSystem] == "Changed later")
 }
 
+@Test @MainActor func savedGenerationSettingsReachCleanupAndSurviveReopen() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let qwen = PromptProbeProcessor("qwen")
+    let service = CleanupService(processors: [.qwen: qwen])
+    let store = PromptStore(directory: directory)
+    service.promptStore = store
+    var config = store.configuration
+    config.qwenGeneration.temperature = 0.6
+    config.qwenGeneration.maxOutputTokens = 512
+    config.appleGeneration.sampling = .probabilityThreshold
+    #expect(store.save(configuration: config, playgroundVocabulary: ""))
+    _ = try await service.run(CleanupRequest(rawText: "hello there"), engine: .qwen, timeout: 2)
+    #expect(await qwen.requests.last?.prompts.qwenGeneration == config.qwenGeneration)
+    let restored = PromptStore(directory: directory)
+    #expect(restored.configuration.qwenGeneration.maxOutputTokens == 512)
+    #expect(restored.configuration.appleGeneration.sampling == .probabilityThreshold)
+}
+
 @Test @MainActor func promptStorePreservesCorruptAndConflictingPreferences() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
