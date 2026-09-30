@@ -76,17 +76,6 @@ struct ModelsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     StudioSectionHeader(title: "Text cleanup")
                     ForEach(QwenModel.allCases) { model in qwenRow(model) }
-                    HStack {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text("Apple Intelligence").font(.system(size: 15, weight: .semibold))
-                            Text(service.appleUnavailableReason == nil ? "Available · managed by macOS" : "Unavailable · managed by macOS")
-                                .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-                        }
-                        Spacer()
-                        Button("System Settings…") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension") { NSWorkspace.shared.open(url) }
-                        }
-                    }.padding(18).background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 10))
                     Text("RAM estimates cover short cleanup requests and exclude transcription. Actual peaks vary.")
                         .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
                 }

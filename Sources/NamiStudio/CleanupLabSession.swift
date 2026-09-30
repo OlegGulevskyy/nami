@@ -16,7 +16,8 @@ private struct CleanupLabWorkspace: Codable {
     var version = 1
     var memory = CleanupMemory()
     var runs: [CleanupLabRun] = []
-    var comparisonEngines: [CleanupEngine]?
+    /// Raw values, so engines that no longer exist (such as "apple") are skipped rather than failing the load.
+    var comparisonEngines: [String]?
     var useMemory: Bool?
     var deadlineSeconds: Double?
 }
@@ -28,7 +29,6 @@ final class CleanupLabSession {
     var useMemory = true
     var deadlineSeconds = 10.0
     var correctedText = ""
-    var compareApple = true
     var compareQwen = true
     var compareQwen17 = false
     var teachingProvider: String?
@@ -47,8 +47,7 @@ final class CleanupLabSession {
 
     init(directory: URL, processor: (any TextProcessor)? = nil, service: CleanupService? = nil) {
         self.directory = directory
-        self.service = service ?? CleanupService(processors: processor.map { [.apple: $0] } ?? [:])
-        if processor != nil { compareQwen = false }
+        self.service = service ?? CleanupService(processors: processor.map { [.qwen: $0] } ?? [:])
         do {
             if FileManager.default.fileExists(atPath: metadataURL.path) {
                 let data = try Data(contentsOf: metadataURL)
@@ -59,9 +58,8 @@ final class CleanupLabSession {
                 memory = workspace.memory
                 runs = workspace.runs
                 if let engines = workspace.comparisonEngines {
-                    compareApple = engines.contains(.apple)
-                    compareQwen = engines.contains(.qwen)
-                    compareQwen17 = engines.contains(.qwen17)
+                    compareQwen = engines.contains(CleanupEngine.qwen.rawValue)
+                    compareQwen17 = engines.contains(CleanupEngine.qwen17.rawValue)
                 }
                 useMemory = workspace.useMemory ?? true
                 deadlineSeconds = workspace.deadlineSeconds ?? 10
@@ -95,7 +93,7 @@ final class CleanupLabSession {
         let request = CleanupRequest(rawText: input, language: language, memory: useMemory ? memory : .init())
         let deadline = deadlineSeconds
         let usedMemory = useMemory
-        let engines: [CleanupEngine] = [.vocabulary] + (compareApple ? [.apple] : []) + (compareQwen ? [.qwen] : []) + (compareQwen17 ? [.qwen17] : [])
+        let engines: [CleanupEngine] = [.vocabulary] + (compareQwen ? [.qwen] : []) + (compareQwen17 ? [.qwen17] : [])
         isBusy = true
         errorMessage = nil
         status = "Comparing local text processors…"
@@ -204,9 +202,9 @@ final class CleanupLabSession {
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let engines: [CleanupEngine] = (compareApple ? [.apple] : []) + (compareQwen ? [.qwen] : []) + (compareQwen17 ? [.qwen17] : [])
+        let engines: [CleanupEngine] = (compareQwen ? [.qwen] : []) + (compareQwen17 ? [.qwen17] : [])
         let data = try encoder.encode(CleanupLabWorkspace(memory: memory, runs: runs,
-            comparisonEngines: engines, useMemory: useMemory, deadlineSeconds: deadlineSeconds))
+            comparisonEngines: engines.map(\.rawValue), useMemory: useMemory, deadlineSeconds: deadlineSeconds))
         try data.write(to: metadataURL, options: .atomic)
         loadedData = data
         self.memory = memory

@@ -10,8 +10,8 @@ Live cleanup is available as an opt-in experiment and is disabled by default.
    dictation**, or an available **Transcription comparison**.
 2. Open **Models** to download Qwen3-0.6B 4-bit (351 MB) or Qwen3-1.7B 4-bit
    (984 MB). **Add to comparison** includes an installed model in Cleanup; the
-   comparison page also offers download buttons. Select either/both Qwen models
-   and Apple Intelligence. Vocabulary rules are always included as a baseline.
+   comparison page also offers download buttons. Select either/both Qwen models.
+   Vocabulary rules are always included as a baseline.
 3. Choose **Run comparison**. Each result includes the full elapsed time and
    any fallback reason. Comparison and live dictation have separate wait limits.
 4. Choose **Correct this result**, edit, then **Remember correction**.
@@ -45,12 +45,12 @@ an inference still unwinding after timeout also blocks it. Selected Whisper
 settings are cleared durably before removal. Deleting the selected Qwen disables
 live cleanup and returns its selection to Automatic. Recordings, saved corrections,
 and past comparison results are retained. External folders/symlinks are managed
-through Finder; Apple Intelligence remains managed by macOS.
+through Finder.
 
 Qwen3-1.7B uses `mlx-community/Qwen3-1.7B-4bit`, pinned revision
 `3b1b1768f8f8cf8351c712464f906e86c2b8269e`. Both Qwen models use the same cleanup
 prompt/decoding policy and separate provider identities, install checks, runners,
-comparison toggles and live-engine choices. Automatic tries Apple, installed 0.6B,
+comparison toggles and live-engine choices. Automatic tries installed 0.6B,
 installed 1.7B, then vocabulary. Downloads stage privately, support cancellation,
 check the pinned weight-file size, and activate only after all assets arrive.
 
@@ -63,17 +63,17 @@ at the final snapshot. These are single short-request observations, exclude Whis
 and non-MLX allocations, and do not establish general cleanup quality or peak app RAM.
 The first request still retained “um”; the filename example used `pom.xml`.
 
-The Apple probe supports English input of at most 2,000 UTF-8 bytes. It uses the
-on-device `SystemLanguageModel`, fresh sessions, prompt version
-`apple-system-cleanup-v2`, guided `EditedTranscript` output, greedy generation and
-a 2,048-output-token cap. Saved examples use quoted passages instead of JSON
+Apple Intelligence (the on-device `SystemLanguageModel`) was removed as a cleanup
+engine on 2026-09-30. Older history still labels its results by name; saved
+settings that selected it fall back to Automatic.
+
+Saved examples use quoted passages instead of JSON
 objects. New object/array wrappers, code fences, and thinking markers are rejected;
 old malformed results cannot be taught back to the model. A conservative length
 check rejects severe truncation (under 40% of the input's whitespace-separated
 words for inputs of six words or more). This may reject some valid aggressive
-edits; it cannot verify meaning or catch every omission. Runtime availability
-is checked; macOS 14 remains the app baseline, while Apple cleanup needs macOS
-26+ and an available Apple Intelligence model. Vocabulary rules work independently.
+edits; it cannot verify meaning or catch every omission. Vocabulary rules work
+independently.
 
 Qwen uses MLX Swift LM **2.29.3**, `mlx-community/Qwen3-0.6B-4bit`, revision
 `73e3e38d981303bc594367cd910ea6eb48349da8`, greedy decoding and
@@ -89,11 +89,10 @@ explicit, staged, and activated only when complete. Inference loads that local
 folder and never initiates model downloads. Qwen accepts up to 8,000 UTF-8 bytes
 and caps output at 2,048 tokens. Both model experiments target English.
 
-**Automatic** prefers available Apple Intelligence, then installed Qwen, then
-vocabulary rules. A specifically selected provider never silently switches to
+**Automatic** prefers installed Qwen 0.6B, then 1.7B, then vocabulary rules. A specifically selected provider never silently switches to
 another model. Unavailable automatic providers can fall through within the same
 overall time budget; generation failures, refusal, invalid output, or timeout keep
-the original. Without Apple Intelligence, choose/download Qwen or use vocabulary.
+the original. Without a downloaded Qwen model, cleanup uses vocabulary rules.
 
 Comparison defaults to **10 seconds** per engine so slow outputs can be inspected.
 Live cleanup defaults to **1 second**, configurable up to 10 seconds. These are
@@ -138,7 +137,7 @@ learning across every app is not promised.
 | Candidate | Role in the investigation | Main limitation to measure |
 | --- | --- | --- |
 | Vocabulary rules | Immediate deterministic personal terms | No grammar or sentence understanding |
-| Apple on-device model | Implemented Swift-native baseline | Availability, fidelity, full-response latency, system-managed model versions |
+| Apple on-device model | Implemented, then removed on 2026-09-30 | Availability, fidelity, full-response latency, system-managed model versions |
 | Qwen3-0.6B, quantized, thinking disabled | Implemented local alternative and automatic fallback | Fidelity at this size, full-response latency, and combined memory |
 | GECToR-style edit tagger | Investigate if full-text generation misses the latency budget | Training/export work; grammar edits do not cover all restarts, self-corrections or personal phrasing |
 

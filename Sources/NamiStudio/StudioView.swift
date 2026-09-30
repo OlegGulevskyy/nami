@@ -336,17 +336,14 @@ public struct StudioView: View {
         .padding(.horizontal, 28).frame(height: 64)
     }
 
+    /// Searches the entire history; the timeline pages only what it lays out.
     private var filteredRuns: [RecordingRun] {
-        session.runs.filter { query.isEmpty || $0.transcript.localizedStandardContains(query) }
-    }
-    private var groupedRuns: [(date: Date, runs: [RecordingRun])] {
-        Dictionary(grouping: filteredRuns) { Calendar.current.startOfDay(for: $0.date) }
-            .map { (date: $0.key, runs: $0.value.sorted { $0.date > $1.date }) }
-            .sorted { $0.date > $1.date }
+        query.isEmpty ? session.runs : session.runs.filter { $0.transcript.localizedStandardContains(query) }
     }
 
     private var history: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        let filteredRuns = filteredRuns
+        return VStack(alignment: .leading, spacing: 18) {
             if searchVisible {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundStyle(StudioStyle.quiet)
@@ -362,7 +359,7 @@ public struct StudioView: View {
                 emptyHistory.frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.bottom, floatingBarHeight)
             } else {
-                RecordingHistoryTimeline(groups: groupedRuns) { run in
+                RecordingHistoryTimeline(runs: filteredRuns) { run in
                     RecordingHistoryRow(session: session, run: run)
                 }
                 .id(query)

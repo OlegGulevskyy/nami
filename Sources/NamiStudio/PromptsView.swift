@@ -4,26 +4,22 @@ import SwiftUI
 
 /// One destination owns both its editors and its preview, so they can never show different models.
 enum PromptDestination: String, CaseIterable {
-    case qwen, apple, whisper, elevenLabs
-    var isCleanup: Bool { self == .qwen || self == .apple }
+    case qwen, whisper, elevenLabs
+    var isCleanup: Bool { self == .qwen }
     var title: String {
         switch self {
         case .qwen: "Qwen 3"
-        case .apple: "Apple Intelligence"
         case .whisper: "Whisper"
         case .elevenLabs: "ElevenLabs"
         }
     }
-    var systemField: PromptField { self == .apple ? .appleSystem : .qwenSystem }
     var editableFields: [PromptField] {
-        guard isCleanup else { return [] }
-        return [systemField, .cleanupUser, .example] + (self == .apple ? [.appleOutput] : [.editsHeading, .savedEdit])
+        isCleanup ? [.qwenSystem, .cleanupUser, .example, .editsHeading, .savedEdit] : []
     }
     func includes(_ record: ModelPromptRecord) -> Bool {
         let provider = record.provider.lowercased()
         switch self {
         case .qwen: return provider.contains("qwen")
-        case .apple: return provider.contains("apple")
         case .whisper: return provider.contains("whisper")
         case .elevenLabs: return provider.contains("elevenlabs")
         }
@@ -57,10 +53,7 @@ struct PromptsView: View {
         Binding(get: { store.draftCleanupTimeout ?? studio.settings.cleanupTimeoutSeconds },
                 set: { store.draftCleanupTimeout = min(10, max(0.1, $0)); showSaved = false })
     }
-    private var generationDirty: Bool {
-        destination == .apple ? draft.appleGeneration != store.configuration.appleGeneration
-            : draft.qwenGeneration != store.configuration.qwenGeneration
-    }
+    private var generationDirty: Bool { draft.qwenGeneration != store.configuration.qwenGeneration }
     private var dirty: Bool {
         if destination.isCleanup {
             return destination.editableFields.contains { draft[$0] != store.configuration[$0] }
@@ -74,30 +67,13 @@ struct PromptsView: View {
         var request = CleanupRequest(rawText: previewText, language: language,
             memory: useMemory ? studio.debugging.cleanupLab.memory : .init())
         request.prompts = previewConfiguration
-        var messages = [ModelPromptMessage(role: "system", content: previewConfiguration[destination.systemField]),
-                        .init(role: "user", content: CleanupPrompt.input(request, highlightEdits: destination == .qwen))]
-        if destination == .apple { messages.append(.init(role: "output field · text", content: previewConfiguration[.appleOutput])) }
-        return messages
+        return [ModelPromptMessage(role: "system", content: previewConfiguration[.qwenSystem]),
+                .init(role: "user", content: CleanupPrompt.input(request, highlightEdits: true))]
     }
     /// The decoding options passed alongside the messages, named as the model API names them.
     private var parameterLines: String {
         let seconds = showSaved ? studio.settings.cleanupTimeoutSeconds : deadline.wrappedValue
         let none = "none"
-        if destination == .apple {
-            let settings = previewConfiguration.appleGeneration
-            let sampling = switch settings.sampling {
-            case .greedy: "greedy"
-            case .topK: "random(top: \(settings.topK))"
-            case .probabilityThreshold: "random(probabilityThreshold: \(format(settings.probabilityThreshold)))"
-            }
-            return [
-                "samplingMode: \(sampling)",
-                "temperature: \(settings.sampling == .greedy ? "ignored (greedy)" : settings.temperature.map(format) ?? "Apple default")",
-                "seed: \(settings.sampling == .greedy ? "ignored (greedy)" : settings.seed.map(String.init) ?? none)",
-                "maximumResponseTokens: \(settings.maxOutputTokens)",
-                "deadline: \(format(seconds)) s",
-            ].joined(separator: "\n")
-        }
         let settings = previewConfiguration.qwenGeneration
         let sampled = settings.temperature > 0
         return [
@@ -224,8 +200,8 @@ struct PromptsView: View {
 
     private var cleanupEditor: some View {
         VStack(alignment: .leading, spacing: 22) {
-            fieldEditor(destination.systemField, title: "System prompt", subtitle: "How \(destination.title) should edit your transcript.", height: 205)
-            fieldEditor(.cleanupUser, title: "User message template", subtitle: "Shared by Qwen and Apple. The transcript is inserted here.", height: 115)
+            fieldEditor(.qwenSystem, title: "System prompt", subtitle: "How \(destination.title) should edit your transcript.", height: 205)
+            fieldEditor(.cleanupUser, title: "User message template", subtitle: "The transcript is inserted here.", height: 115)
             HStack(spacing: 6) {
                 variable("transcript", help: "The sample transcript below, quoted and with vocabulary replacements applied.")
                 variable("context", help: "Relevant saved corrections. Empty when none apply.")
@@ -251,16 +227,11 @@ struct PromptsView: View {
             }
             DisclosureGroup("Advanced · saved corrections & output", isExpanded: $advanced) {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("These templates build {{context}}. Saved corrections are shared by both cleanup models; Qwen can also receive short wording instructions.")
+                    Text("These templates build {{context}} from saved corrections, including short wording instructions.")
                         .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
                     fieldEditor(.example, title: "Correction example", subtitle: "{{raw}} → original · {{corrected}} → your correction", height: 90)
-                    if destination == .qwen {
                     fieldEditor(.editsHeading, title: "Qwen wording instructions", subtitle: "Heading before any matching wording changes.", height: 75)
                     fieldEditor(.savedEdit, title: "Qwen wording change", subtitle: "{{source}} → original wording · {{replacement}} → correction", height: 75)
-                    }
-                    if destination == .apple {
-                        fieldEditor(.appleOutput, title: "Apple output field", subtitle: "Instructions for the text field in Apple’s structured response.", height: 95)
-                    }
                 }.padding(.top, 14)
             }.font(.system(size: 12, weight: .medium))
         }
@@ -272,7 +243,7 @@ struct PromptsView: View {
                 Text("Generation settings").font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Button("Reset") {
-                    if destination == .apple { draft.appleGeneration = .init() } else { draft.qwenGeneration = .init() }
+                    draft.qwenGeneration = .init()
                     deadline.wrappedValue = StudioSettings().cleanupTimeoutSeconds
                 }
                 .font(.system(size: 11)).buttonStyle(.plain).foregroundStyle(StudioStyle.green)
@@ -280,16 +251,15 @@ struct PromptsView: View {
             }
             Text("Sent with every request to \(destination.title), next to the messages.")
                 .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-            if destination == .apple { appleGeneration } else { qwenGeneration }
-            parameterRow("Deadline", detail: "Seconds before Nami gives up and keeps the original. Shared by both cleanup models.") {
+            qwenGeneration
+            parameterRow("Deadline", detail: "Seconds before Nami gives up and keeps the original. Shared by both Qwen models.") {
                 numberField("Deadline", value: deadline, step: 0.5, range: 0.1...10, suffix: "s")
             }
         }
     }
 
     private var generationIsDefault: Bool {
-        (destination == .apple ? draft.appleGeneration == .init() : draft.qwenGeneration == .init())
-            && deadline.wrappedValue == StudioSettings().cleanupTimeoutSeconds
+        draft.qwenGeneration == .init() && deadline.wrappedValue == StudioSettings().cleanupTimeoutSeconds
     }
 
     @ViewBuilder private var qwenGeneration: some View {
@@ -325,57 +295,14 @@ struct PromptsView: View {
         }
     }
 
-    @ViewBuilder private var appleGeneration: some View {
-        let sampling = draft.appleGeneration.sampling
-        parameterRow("Sampling", detail: "Greedy always picks the most likely word, so a retry gives the same result.") {
-            Picker("Sampling", selection: apple(\.sampling)) {
-                ForEach(AppleGenerationSettings.Sampling.allCases, id: \.self) { Text($0.title).tag($0) }
-            }.labelsHidden().pickerStyle(.segmented).fixedSize()
-        }
-        if sampling == .topK {
-            parameterRow("Top-k", detail: "Samples from this many of the most likely words.") {
-                numberField("Top-k", value: appleInt(\.topK), step: 5, range: 1...500)
-            }
-        }
-        if sampling == .probabilityThreshold {
-            parameterRow("Top-p", detail: "Samples only from the most likely words that add up to this share.") {
-                numberField("Top-p", value: apple(\.probabilityThreshold), step: 0.05, range: 0.01...1)
-            }
-        }
-        parameterRow("Temperature", detail: "Higher values vary the wording. Unchecked lets Apple choose. Ignored by greedy sampling.") {
-            HStack(spacing: 8) {
-                Toggle("Custom temperature", isOn: Binding(get: { draft.appleGeneration.temperature != nil },
-                    set: { draft.appleGeneration.temperature = $0 ? 0.7 : nil; showSaved = false })).labelsHidden().toggleStyle(.checkbox)
-                numberField("Temperature", value: Binding(get: { draft.appleGeneration.temperature ?? 0.7 },
-                    set: { draft.appleGeneration.temperature = $0; draft.appleGeneration = draft.appleGeneration.clamped; showSaved = false }),
-                    step: 0.1, range: 0...2).disabled(draft.appleGeneration.temperature == nil)
-            }
-        }.disabled(sampling == .greedy)
-        parameterRow("Seed", detail: "Repeats the same sampled result. Ignored by greedy sampling.") {
-            optionalSeed(apple(\.seed))
-        }.disabled(sampling == .greedy)
-        parameterRow("Maximum output", detail: "Nami keeps the original if the model reaches this before finishing.") {
-            numberField("Maximum output tokens", value: appleInt(\.maxOutputTokens), step: 256, range: 16...8_192, suffix: "tokens")
-        }
-    }
-
     private func qwen<Value>(_ keyPath: WritableKeyPath<QwenGenerationSettings, Value>) -> Binding<Value> {
         Binding(get: { draft.qwenGeneration[keyPath: keyPath] },
                 set: { draft.qwenGeneration[keyPath: keyPath] = $0; draft.qwenGeneration = draft.qwenGeneration.clamped; showSaved = false })
-    }
-    private func apple<Value>(_ keyPath: WritableKeyPath<AppleGenerationSettings, Value>) -> Binding<Value> {
-        Binding(get: { draft.appleGeneration[keyPath: keyPath] },
-                set: { draft.appleGeneration[keyPath: keyPath] = $0; draft.appleGeneration = draft.appleGeneration.clamped; showSaved = false })
     }
     private func qwenInt(_ keyPath: WritableKeyPath<QwenGenerationSettings, Int>) -> Binding<Double> {
         let value = qwen(keyPath)
         return Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Int($0.rounded()) })
     }
-    private func appleInt(_ keyPath: WritableKeyPath<AppleGenerationSettings, Int>) -> Binding<Double> {
-        let value = apple(keyPath)
-        return Binding(get: { Double(value.wrappedValue) }, set: { value.wrappedValue = Int($0.rounded()) })
-    }
-
     private func parameterRow<Control: View>(_ title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
@@ -490,7 +417,7 @@ struct PromptsView: View {
         if destination.isCleanup {
             var config = store.configuration
             for field in destination.editableFields { config[field] = draft[field] }
-            if destination == .apple { config.appleGeneration = draft.appleGeneration } else { config.qwenGeneration = draft.qwenGeneration }
+            config.qwenGeneration = draft.qwenGeneration
             saved = store.save(configuration: config, playgroundVocabulary: store.playgroundVocabulary)
             if saved { studio.settings.cleanupTimeoutSeconds = deadline.wrappedValue }
         } else if liveVocabulary {
@@ -504,8 +431,7 @@ struct PromptsView: View {
     private func discard() {
         if destination.isCleanup {
             for field in destination.editableFields { draft[field] = store.configuration[field] }
-            if destination == .apple { draft.appleGeneration = store.configuration.appleGeneration }
-            else { draft.qwenGeneration = store.configuration.qwenGeneration }
+            draft.qwenGeneration = store.configuration.qwenGeneration
             store.draftCleanupTimeout = studio.settings.cleanupTimeoutSeconds
         } else { vocabulary.wrappedValue = savedVocabulary }
         saved = false
@@ -538,12 +464,13 @@ struct PromptsView: View {
                                 HStack {
                                     Text(record.date.formatted(date: .abbreviated, time: .standard)).font(.system(size: 12))
                                     Spacer()
-                                    Button("Copy request") { copy(record) }.font(.system(size: 12))
+                                    Button("Copy request & response") { copy(record) }.font(.system(size: 12))
                                 }
                                 Text(record.provider).font(.system(size: 12, weight: .medium))
                                 ForEach(Array(record.messages.enumerated()), id: \.offset) { index, message in
                                     messageBlock(message.role, content: message.content, number: index + 1)
                                 }
+                                responseSection(record)
                                 DisclosureGroup("Request details") {
                                     Text(record.details + "\n\nID: " + record.requestID.uuidString)
                                         .font(.system(size: 11, design: .monospaced)).textSelection(.enabled).padding(.top, 8)
@@ -553,7 +480,7 @@ struct PromptsView: View {
                     }
                 }
             }
-            Text("Captured before inference, including requests that later fail. Stored on this Mac · up to 200 recent requests across all models.")
+            Text("Captured before inference and updated with the model’s response, including requests that fail or time out. Stored on this Mac · up to 200 recent requests across all models.")
                 .font(.system(size: 11)).foregroundStyle(StudioStyle.quiet)
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -564,9 +491,101 @@ struct PromptsView: View {
                 Text(entry.source).font(.system(size: 12, weight: .semibold))
                 Text(entry.date.formatted(date: .abbreviated, time: .shortened)).font(.system(size: 11))
                 Text(entry.provider).font(.system(size: 10)).foregroundStyle(StudioStyle.quiet).lineLimit(2)
+                Text(Self.status(entry)).font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Self.failed(entry) ? Color.red.opacity(0.8) : StudioStyle.green).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                 .background(record?.id == entry.id ? StudioStyle.soft : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain)
+    }
+
+    private func responseSection(_ record: ModelPromptRecord) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.left").font(.system(size: 11))
+                Text("Response").font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 4)
+                Text(Self.status(record)).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Self.failed(record) ? Color.red.opacity(0.8) : StudioStyle.green)
+            }.padding(.top, 6)
+            if let response = record.response {
+                let stats = Self.stats(record)
+                if !stats.isEmpty {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), alignment: .leading)], alignment: .leading, spacing: 8) {
+                        ForEach(stats, id: \.0) { label, value in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(label.uppercased()).font(.system(size: 9, weight: .semibold)).foregroundStyle(StudioStyle.quiet)
+                                Text(value).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+                if !response.details.isEmpty {
+                    Text(response.details).font(.system(size: 11)).foregroundStyle(StudioStyle.quiet).textSelection(.enabled)
+                }
+                if let problem = response.error ?? record.outcome?.reason {
+                    Label(problem, systemImage: "exclamationmark.triangle").font(.system(size: 12))
+                        .foregroundStyle(Color.red.opacity(0.8)).textSelection(.enabled)
+                }
+                messageBlock("model output · raw", content: response.output, number: record.messages.count + 1)
+                if let outcome = record.outcome, outcome.text != response.output.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    messageBlock(Self.succeeded(outcome) ? "Nami · text used" : "Nami · original kept",
+                                 content: outcome.text, number: record.messages.count + 2)
+                }
+            } else if let outcome = record.outcome {
+                Label(outcome.reason ?? "The model returned nothing before Nami finished.", systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12)).foregroundStyle(Color.red.opacity(0.8)).textSelection(.enabled)
+                Text("Total \(Self.duration(outcome.totalSeconds)). No response arrived; it may still be running or was stopped at the deadline.")
+                    .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+            } else {
+                Text("No response recorded. The request is still running, the app quit before the model returned, or it was sent before responses were captured.")
+                    .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private static func succeeded(_ outcome: ModelPromptOutcome) -> Bool { ["cleaned", "unchanged"].contains(outcome.outcome) }
+
+    private static func failed(_ record: ModelPromptRecord) -> Bool {
+        if let outcome = record.outcome { return !succeeded(outcome) }
+        return record.response?.error != nil
+    }
+
+    static func status(_ record: ModelPromptRecord) -> String {
+        let label: String
+        if let outcome = record.outcome {
+            label = switch outcome.outcome {
+            case "invalidOutput": "invalid output"
+            case "timedOut": "timed out"
+            default: outcome.outcome
+            }
+        } else if let response = record.response {
+            label = response.error == nil ? "responded" : "failed"
+        } else { return "no response" }
+        guard let seconds = record.outcome?.totalSeconds ?? record.response?.seconds else { return label }
+        return label + " · " + duration(seconds)
+    }
+
+    static func stats(_ record: ModelPromptRecord) -> [(String, String)] {
+        var stats: [(String, String)] = []
+        if let outcome = record.outcome {
+            stats.append(("Total", duration(outcome.totalSeconds)))
+            if let preparation = outcome.preparationSeconds { stats.append(("Load / prepare", duration(preparation))) }
+        }
+        guard let response = record.response else { return stats }
+        stats.append(("Model call", duration(response.seconds)))
+        if let prompt = response.promptSeconds { stats.append(("Prompt · first token", duration(prompt))) }
+        if let generation = response.generationSeconds { stats.append(("Generation", duration(generation))) }
+        if let input = response.inputTokens {
+            stats.append(("Input tokens", "\(input)"))
+            if let prompt = response.promptSeconds, prompt > 0 { stats.append(("Prompt speed", "\(Int(Double(input) / prompt)) tok/s")) }
+        }
+        if let output = response.outputTokens { stats.append(("Output tokens", "\(output)")) }
+        if let speed = response.outputTokensPerSecond { stats.append(("Output speed", String(format: "%.1f tok/s", speed))) }
+        return stats
+    }
+
+    static func duration(_ seconds: Double) -> String {
+        seconds < 1 ? "\(Int((seconds * 1000).rounded())) ms" : String(format: "%.2f s", seconds)
     }
 
     private func panel<Content: View>(title: String, icon: String, trailing: String, tinted: Bool = false,
@@ -648,8 +667,19 @@ struct PromptsView: View {
 
     private func copy(_ record: ModelPromptRecord) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(([record.source, record.provider, record.details] + record.messages.map {
+        var sections = [record.source, record.provider, record.details] + record.messages.map {
             "\($0.role.uppercased())\n\($0.content)"
-        }).joined(separator: "\n\n"), forType: .string)
+        }
+        sections.append("RESPONSE · \(Self.status(record))\n" + Self.stats(record).map { "\($0.0): \($0.1)" }.joined(separator: "\n"))
+        if let response = record.response {
+            if !response.details.isEmpty { sections.append(response.details) }
+            if let error = response.error { sections.append("ERROR\n\(error)") }
+            sections.append("MODEL OUTPUT · RAW\n\(response.output)")
+        }
+        if let outcome = record.outcome {
+            if let reason = outcome.reason, reason != record.response?.error { sections.append("REASON\n\(reason)") }
+            sections.append("TEXT USED\n\(outcome.text)")
+        }
+        NSPasteboard.general.setString(sections.joined(separator: "\n\n"), forType: .string)
     }
 }

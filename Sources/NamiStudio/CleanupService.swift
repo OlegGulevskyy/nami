@@ -1,12 +1,10 @@
 import Foundation
-import NamiAppleCleanup
 import NamiCore
 import NamiMLXCleanup
 import Observation
 
 @MainActor @Observable
 final class CleanupService {
-    private(set) var appleUnavailableReason = AppleCleanup.unavailableReason
     private(set) var installed: Set<CleanupEngine> = []
     private(set) var downloadingEngine: CleanupEngine?
     private(set) var removingEngine: CleanupEngine?
@@ -25,9 +23,7 @@ final class CleanupService {
 
     init(processors overrides: [CleanupEngine: any TextProcessor] = [:], modelsRoot: URL = QwenModelAssets.root) {
         self.modelsRoot = modelsRoot
-        var processors: [CleanupEngine: any TextProcessor] = [
-            .apple: AppleCleanup.makeProcessor(), .vocabulary: VocabularyTextProcessor(),
-        ]
+        var processors: [CleanupEngine: any TextProcessor] = [.vocabulary: VocabularyTextProcessor()]
         for model in QwenModel.allCases {
             processors[model.engine] = QwenTextProcessor(model: model, directory: QwenModelAssets.directory(for: model, root: modelsRoot))
         }
@@ -39,7 +35,6 @@ final class CleanupService {
     }
 
     func refreshAvailability() {
-        appleUnavailableReason = injected.contains(.apple) ? nil : AppleCleanup.unavailableReason
         installed = Set(QwenModel.allCases.filter {
             injected.contains($0.engine) || QwenModelAssets.isInstalled($0, at: folder(for: $0))
         }.map(\.engine))
@@ -48,7 +43,7 @@ final class CleanupService {
     func folder(for model: QwenModel) -> URL { QwenModelAssets.directory(for: model, root: modelsRoot) }
     func isInstalled(_ engine: CleanupEngine) -> Bool { installed.contains(engine) }
     var automaticEngine: CleanupEngine {
-        appleUnavailableReason == nil ? .apple : (installed.contains(.qwen) ? .qwen : (installed.contains(.qwen17) ? .qwen17 : .vocabulary))
+        installed.contains(.qwen) ? .qwen : (installed.contains(.qwen17) ? .qwen17 : .vocabulary)
     }
 
     func downloadQwen(_ engine: CleanupEngine = .qwen) {
@@ -109,8 +104,9 @@ final class CleanupService {
         let started = ContinuousClock.now
         let budget = min(30, max(0.05, timeout.isFinite ? timeout : 1))
         var result = try await runners[selected]!.run(request, timeout: .seconds(budget))
+        promptStore?.record(result)
         if engine == .automatic, result.outcome == .unavailable {
-            let order: [CleanupEngine] = [.apple, .qwen, .qwen17, .vocabulary]
+            let order: [CleanupEngine] = [.qwen, .qwen17, .vocabulary]
             for fallback in order.drop(while: { $0 != selected }).dropFirst() {
                 guard result.outcome == .unavailable else { break }
                 if QwenModel.model(for: fallback) != nil && !installed.contains(fallback) { continue }
@@ -118,6 +114,7 @@ final class CleanupService {
                 let remaining = budget - Self.seconds(since: started)
                 guard remaining > 0 else { break }
                 result = try await runners[fallback]!.run(request, timeout: .seconds(remaining))
+                promptStore?.record(result)
             }
         }
         try Task.checkCancellation()

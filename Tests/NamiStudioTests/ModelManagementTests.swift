@@ -140,14 +140,14 @@ private actor ManagedCleanupProbe: TextProcessor {
     let large = ManagedCleanupProbe(QwenModel.qwen17.processorID)
     let service = CleanupService(processors: [.qwen: small, .qwen17: large], modelsRoot: root.appendingPathComponent("Models"))
     let lab = CleanupLabSession(directory: root, service: service)
-    lab.compareApple = false; lab.compareQwen = true; lab.compareQwen17 = true
+    lab.compareQwen = true; lab.compareQwen17 = true
     lab.input = "Keep two instances."
     lab.compare()
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while lab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     #expect(lab.latestRun?.results.map(\.provider) == ["vocabulary-v1", small.identifier, large.identifier])
     let restored = CleanupLabSession(directory: root, service: service)
-    #expect(restored.compareQwen17 && restored.compareQwen && !restored.compareApple)
+    #expect(restored.compareQwen17 && restored.compareQwen)
     let result = try await service.run(.init(rawText: "A live request."), engine: .qwen17, timeout: 1)
     #expect(result.provider == large.identifier)
     #expect(await large.requests.count == 2)

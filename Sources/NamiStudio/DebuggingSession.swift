@@ -24,7 +24,6 @@ public final class DebuggingSession {
         page = .cleanup
         cleanupLab.input = "um can you check the name me deployment I think I think we need two instances"
         cleanupLab.deadlineSeconds = 30
-        cleanupLab.compareApple = true
         cleanupLab.compareQwen = true
         cleanupLab.addVocabulary(heard: "name me", replacement: "Nami")
         cleanupLab.compare()

@@ -216,15 +216,32 @@ private actor WhisperRuntime {
             }
         }
         let tokens = options.promptTokens ?? []
-        await promptObserver?(.init(requestID: requestID, provider: "Whisper · " + URL(fileURLWithPath: modelFolder).lastPathComponent,
+        let record = ModelPromptRecord(requestID: requestID, provider: "Whisper · " + URL(fileURLWithPath: modelFolder).lastPathComponent,
             messages: [.init(role: "vocabulary · effective prompt", content: pipeline.tokenizer?.decode(tokens: tokens) ?? "")],
-            details: "Language: \(language ?? "auto") · vocabulary token IDs: \(tokens). Whisper keeps the final \((Constants.maxTokenContext / 2) - 1) vocabulary tokens. No system prompt. Each entry is one decode call; the SDK manages audio windows internally."))
+            details: "Language: \(language ?? "auto") · vocabulary token IDs: \(tokens). Whisper keeps the final \((Constants.maxTokenContext / 2) - 1) vocabulary tokens. No system prompt. Each entry is one decode call; the SDK manages audio windows internally.")
+        await promptObserver?(record)
         try Task.checkCancellation()
-        let results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options)
+        let started = ContinuousClock.now
+        let results: [TranscriptionResult]
+        do { results = try await pipeline.transcribe(audioArray: audio, decodeOptions: options) } catch {
+            await promptObserver?(record.responding(.init(output: "", error: error.localizedDescription, seconds: started.secondsElapsed)))
+            throw error
+        }
+        let text = results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        let segments = results.flatMap(\.segments)
+        let audioSeconds = Double(audio.count) / Double(WhisperKit.sampleRate)
+        let seconds = started.secondsElapsed
+        await promptObserver?(record.responding(.init(output: text,
+            error: Task.isCancelled ? "Cancelled before the transcript was used." : nil, seconds: seconds,
+            outputTokens: segments.reduce(0) { $0 + $1.tokens.count },
+            generationSeconds: results.reduce(0) { $0 + $1.timings.decodingLoop },
+            details: String(format: "Audio %.1f s · %.1f× real time · %d segments · %d windows · language %@",
+                audioSeconds, seconds > 0 ? audioSeconds / seconds : 0, segments.count,
+                Int(results.reduce(0) { $0 + $1.timings.totalDecodingWindows }), results.first?.language ?? language ?? "auto"))))
         try Task.checkCancellation()
         return DecodedAudio(
-            text: results.map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines),
-            segments: results.flatMap(\.segments).map {
+            text: text,
+            segments: segments.map {
                 DecodedSegment(start: Double($0.start), end: Double($0.end), text: $0.text)
             })
     }

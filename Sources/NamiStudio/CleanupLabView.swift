@@ -37,7 +37,6 @@ struct CleanupLabView: View {
             .padding(28).frame(maxWidth: 1300, alignment: .topLeading).frame(maxWidth: .infinity)
         }
         .onStudioPageVisibility(appear: service.refreshAvailability)
-        .onChange(of: lab.compareApple) { lab.savePreferences() }
         .onChange(of: lab.compareQwen) { lab.savePreferences() }
         .onChange(of: lab.compareQwen17) { lab.savePreferences() }
         .onChange(of: lab.useMemory) { lab.savePreferences() }
@@ -60,9 +59,7 @@ struct CleanupLabView: View {
                 }
             }.disabled(studio.phase.busy || studio.modelMaintenance)
             if studio.settings.cleanupEnabled {
-                if studio.settings.cleanupEngine == .apple, let reason = service.appleUnavailableReason {
-                    message(reason, color: .orange)
-                } else if QwenModel.model(for: studio.settings.cleanupEngine) != nil, !service.isInstalled(studio.settings.cleanupEngine) {
+                if QwenModel.model(for: studio.settings.cleanupEngine) != nil, !service.isInstalled(studio.settings.cleanupEngine) {
                     message("Download the selected model in Models to use it for dictation.", color: .orange)
                 }
             }
@@ -83,7 +80,7 @@ struct CleanupLabView: View {
                 Text(engine == .automatic ? "Automatic · \(service.automaticEngine.title)" : engine.title).tag(engine)
             }
         }.frame(minWidth: 260, maxWidth: 380)
-            .help("Automatic uses Apple when available, then downloaded Qwen, then vocabulary rules. Failed or timed-out cleanup keeps the original transcript.")
+            .help("Automatic uses downloaded Qwen 0.6B, then 1.7B, then vocabulary rules. Failed or timed-out cleanup keeps the original transcript.")
     }
     private var liveTimeout: some View {
         Picker("Max wait", selection: $studio.settings.cleanupTimeoutSeconds) {
@@ -113,7 +110,6 @@ struct CleanupLabView: View {
                 }.fixedSize().disabled(locked)
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 16)], alignment: .leading, spacing: 16) {
-                modelOption(.apple, selected: $lab.compareApple)
                 modelOption(.qwen, selected: $lab.compareQwen)
                 modelOption(.qwen17, selected: $lab.compareQwen17)
             }
@@ -150,11 +146,7 @@ struct CleanupLabView: View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(engine.title, isOn: selected).toggleStyle(.checkbox)
                 .font(.system(size: 14, weight: .medium)).disabled(locked)
-            if engine == .apple {
-                Text(service.appleUnavailableReason == nil ? "Ready on this Mac" : "Unavailable on this Mac")
-                    .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-                    .help(service.appleUnavailableReason ?? "Uses Apple's on-device text model.")
-            } else if service.downloadingEngine == engine {
+            if service.downloadingEngine == engine {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text("Downloading…").font(.system(size: 12))

@@ -12,7 +12,7 @@ private actor PromptProbeProcessor: TextProcessor {
     func process(_ request: CleanupRequest) async throws -> String {
         requests.append(request)
         await request.promptObserver?(.init(requestID: request.id, provider: identifier, messages: [
-            .init(role: "system", content: request.prompts[identifier == "apple" ? .appleSystem : .qwenSystem]),
+            .init(role: "system", content: request.prompts[.qwenSystem]),
             .init(role: "user", content: CleanupPrompt.input(request)),
         ]))
         if unavailable { throw CleanupFailure.unavailable("Try fallback") }
@@ -23,20 +23,19 @@ private actor PromptProbeProcessor: TextProcessor {
 @Test @MainActor func promptEditsReachCleanupAndAutomaticFallbackAndHistorySurvivesReopen() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let apple = PromptProbeProcessor("apple", unavailable: true)
+    let small = PromptProbeProcessor("qwen-small", unavailable: true)
     let qwen = PromptProbeProcessor("qwen")
-    let service = CleanupService(processors: [.apple: apple, .qwen: qwen])
+    let service = CleanupService(processors: [.qwen: small, .qwen17: qwen])
     let lab = DebuggingSession(directory: directory, cleanupService: service)
     let store = lab.promptStore
     var config = store.configuration
-    config[.appleSystem] = "Apple custom instruction"
     config[.qwenSystem] = "Qwen custom instruction"
     config[.cleanupUser] = "Custom: {{transcript}}"
     #expect(store.save(configuration: config, playgroundVocabulary: "Nami, MLX"))
     let request = CleanupRequest(rawText: "hello there")
     let result = try await service.run(request, engine: .automatic, timeout: 2, source: "Live dictation")
     #expect(result.succeeded && result.provider == "qwen")
-    #expect(await apple.requests.last?.prompts == config)
+    #expect(await small.requests.last?.prompts == config)
     #expect(await qwen.requests.last?.prompts == config)
     #expect(store.records.count == 2)
     #expect(store.records.allSatisfy { $0.requestID == request.id && $0.source == "Live dictation" })
@@ -54,7 +53,7 @@ private actor PromptProbeProcessor: TextProcessor {
     while lab.cleanupLab.isBusy && .now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     #expect(!lab.cleanupLab.isBusy)
     #expect(store.records.first?.source == "Playground cleanup")
-    #expect(await qwen.requests.last?.prompts[.qwenSystem] == "Changed later")
+    #expect(await small.requests.last?.prompts[.qwenSystem] == "Changed later")
 }
 
 @Test @MainActor func savedGenerationSettingsReachCleanupAndSurviveReopen() async throws {
@@ -67,13 +66,11 @@ private actor PromptProbeProcessor: TextProcessor {
     var config = store.configuration
     config.qwenGeneration.temperature = 0.6
     config.qwenGeneration.maxOutputTokens = 512
-    config.appleGeneration.sampling = .probabilityThreshold
     #expect(store.save(configuration: config, playgroundVocabulary: ""))
     _ = try await service.run(CleanupRequest(rawText: "hello there"), engine: .qwen, timeout: 2)
     #expect(await qwen.requests.last?.prompts.qwenGeneration == config.qwenGeneration)
     let restored = PromptStore(directory: directory)
     #expect(restored.configuration.qwenGeneration.maxOutputTokens == 512)
-    #expect(restored.configuration.appleGeneration.sampling == .probabilityThreshold)
 }
 
 @Test @MainActor func promptStorePreservesCorruptAndConflictingPreferences() throws {

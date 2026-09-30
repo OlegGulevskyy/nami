@@ -188,7 +188,7 @@ private func projectDirectory() throws -> URL {
     var blocked = false
     var unavailable = false
     private var continuation: CheckedContinuation<Void, Never>?
-    init(_ output: String = "The whole thought from beginning to end.", identifier: String = "apple-test") {
+    init(_ output: String = "The whole thought from beginning to end.", identifier: String = "cleanup-test") {
         self.output = output; self.identifier = identifier
     }
     func prepare() async throws {}
@@ -214,11 +214,11 @@ private func projectDirectory() throws -> URL {
             pastes += 1; pasted.append(text)
             indicatorAtPaste = observed.map { ($0.isCleaningUp, $0.isPasting) }
             return .sent } },
-        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
         clipboardWriter: { copies.append($0); return true })
     observed = session
     session.debugging.cleanupLab.addVocabulary(heard: "name me", replacement: "Nami")
-    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEngine = .qwen
     session.settings.cleanupEnabled = true
     session.settings.cleanupTimeoutSeconds = 5
     session.startRecording()
@@ -248,7 +248,7 @@ private func projectDirectory() throws -> URL {
     #expect(run.cleanupResult?.provider == processor.identifier)
     #expect(try RecordingHistoryStore(directory: session.historyDirectory).load().runs.first?.rawTranscript == engine.transcript)
     let settings = try StudioSettings.load(project: project)
-    #expect(settings.cleanupEnabled && settings.cleanupEngine == .apple && settings.cleanupTimeoutSeconds == 5)
+    #expect(settings.cleanupEnabled && settings.cleanupEngine == .qwen && settings.cleanupTimeoutSeconds == 5)
     #expect(session.copyOriginalTranscript(run))
     #expect(copies == [processor.output, engine.transcript] && pastes == 1)
 }
@@ -259,7 +259,7 @@ private func projectDirectory() throws -> URL {
     var copies: [String] = []
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
         permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } },
-        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
         clipboardWriter: { copies.append($0); return true })
     #expect(!session.settings.cleanupEnabled)
     session.startRecording()
@@ -286,9 +286,9 @@ private func projectDirectory() throws -> URL {
         var copies: [String] = [], pastes = 0
         let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
             permissions: allowedPermissions(), pastePreparer: { { _, _ in pastes += 1; return .sent } },
-            engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+            engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
             clipboardWriter: { copies.append($0); return true })
-        session.settings.cleanupEngine = .apple
+        session.settings.cleanupEngine = .qwen
         // Only the blocked-provider case is testing deadline enforcement.
         session.settings.cleanupTimeoutSeconds = timedOut ? 0.1 : 10
         session.settings.cleanupEnabled = true
@@ -363,9 +363,9 @@ private func projectDirectory() throws -> URL {
     var copies: [String] = [], pastes = 0
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
         permissions: allowedPermissions(), pastePreparer: { { _, _ in pastes += 1; return .sent } },
-        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
         clipboardWriter: { copies.append($0); return true })
-    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEngine = .qwen
     session.settings.cleanupEnabled = true
     session.startRecording()
     try await waitUntil { session.phase == .recording }
@@ -394,9 +394,9 @@ private func projectDirectory() throws -> URL {
         permissions: allowedPermissions(), pastePreparer: {
             preparations += 1
             return { _, _ in if targetChanged { return .targetChanged }; pasted += 1; return .sent }
-        }, engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        }, engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
         clipboardWriter: { copies.append($0); return true })
-    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEngine = .qwen
     session.settings.cleanupEnabled = true
     session.startRecording()
     try await waitUntil { session.phase == .recording }
@@ -419,9 +419,9 @@ private func projectDirectory() throws -> URL {
 }
 
 @Test @MainActor func cleanupAutomaticFallsBackButExplicitSelectionIsRespected() async throws {
-    let apple = TestCleanupProcessor(), qwen = TestCleanupProcessor("Qwen result.", identifier: "qwen-test")
-    apple.unavailable = true
-    let service = CleanupService(processors: [.apple: apple, .qwen: qwen])
+    let small = TestCleanupProcessor(), qwen = TestCleanupProcessor("Qwen result.", identifier: "qwen-test")
+    small.unavailable = true
+    let service = CleanupService(processors: [.qwen: small, .qwen17: qwen])
     let request = CleanupRequest(rawText: "Original")
     // Test provider selection without racing CI's parallel MainActor work.
     // Deadline enforcement is covered separately in CleanupTests.
@@ -430,7 +430,7 @@ private func projectDirectory() throws -> URL {
     #expect(automatic.outcome == .cleaned)
     #expect(automatic.provider == "qwen-test")
     #expect(automatic.text == "Qwen result.")
-    let explicit = try await service.run(request, engine: .apple, timeout: timeout)
+    let explicit = try await service.run(request, engine: .qwen, timeout: timeout)
     #expect(explicit.outcome == .unavailable)
     #expect(explicit.text == "Original")
     #expect(qwen.requests.count == 1)
@@ -1468,7 +1468,7 @@ private func projectDirectory() throws -> URL {
     defer { engine.releaseFinish = true }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
         permissions: allowedPermissions(), pastePreparer: { Issue.record("Retry must not prepare a paste"); return { _, _ in .sent } },
-        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in capture },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
         clipboardWriter: { _ in Issue.record("Retry must not overwrite the clipboard"); return true })
     session.settings.engine = "fake"
     session.settings.modelFolder = "/models/current-model"
@@ -1476,7 +1476,7 @@ private func projectDirectory() throws -> URL {
     session.settings.language = "fr"
     session.settings.copyWhenFinished = true
     session.settings.cleanupEnabled = true
-    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEngine = .qwen
     session.settings.cleanupTimeoutSeconds = 10
     session.retranscribeRun(original.id)
     #expect(session.retranscribingRunID == original.id)
@@ -1518,10 +1518,10 @@ private func projectDirectory() throws -> URL {
     defer { engine.releaseFinish = true; processor.release() }
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
         permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } },
-        engineBuilder: { _ in engine }, cleanupProcessors: [.apple: processor], captureBuilder: { _ in TestCapture() },
+        engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in TestCapture() },
         clipboardWriter: { _ in Issue.record("Retry must not copy"); return true })
     session.settings.cleanupEnabled = mode == "cancel-cleanup"
-    session.settings.cleanupEngine = .apple
+    session.settings.cleanupEngine = .qwen
     session.settings.cleanupTimeoutSeconds = 10
     if mode == "missing-audio" { try FileManager.default.removeItem(at: #require(original.savedURL)) }
     session.retranscribeRun(original.id)

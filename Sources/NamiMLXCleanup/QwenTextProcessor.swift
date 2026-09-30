@@ -64,8 +64,8 @@ public actor QwenTextProcessor: TextProcessor {
             let input = try await context.processor.prepare(input: UserInput(
                 messages: messages.map { ["role": $0.role, "content": $0.content] },
                 additionalContext: ["enable_thinking": settings.thinking]))
-            await request.promptObserver?(.init(requestID: request.id, provider: identifier,
-                messages: messages, details: settings.summary))
+            let record = ModelPromptRecord(requestID: request.id, provider: identifier, messages: messages, details: settings.summary)
+            await request.promptObserver?(record)
             try Task.checkCancellation()
             if settings.temperature > 0, let seed = settings.seed { MLXRandom.seed(seed) }
             // Keep iteration inside this operation until MLX really stops. This
@@ -74,11 +74,25 @@ public actor QwenTextProcessor: TextProcessor {
             let parameters = GenerateParameters(maxTokens: settings.maxOutputTokens, temperature: Float(settings.temperature),
                 topP: Float(settings.topP), repetitionPenalty: settings.repetitionPenalty.map(Float.init),
                 repetitionContextSize: settings.repetitionContextSize)
-            let result = try MLXLMCommon.generate(input: input, parameters: parameters, context: context) { (_: [Int]) in
+            let started = ContinuousClock.now
+            let result: GenerateResult
+            do {
+                result = try MLXLMCommon.generate(input: input, parameters: parameters, context: context) { (_: [Int]) in
                     Task.isCancelled ? .stop : .more
                 }
+            } catch {
+                await request.promptObserver?(record.responding(.init(output: "", error: error.localizedDescription,
+                    seconds: started.secondsElapsed)))
+                throw error
+            }
+            let limitReached = result.tokens.count >= settings.maxOutputTokens
+            await request.promptObserver?(record.responding(.init(output: result.output,
+                error: Task.isCancelled ? "Stopped early: cancelled or past the cleanup deadline."
+                    : limitReached ? CleanupFailure.outputLimitReached.localizedDescription : nil,
+                seconds: started.secondsElapsed, inputTokens: result.promptTokenCount, outputTokens: result.tokens.count,
+                promptSeconds: result.promptTime, generationSeconds: result.generateTime)))
             try Task.checkCancellation()
-            guard result.tokens.count < settings.maxOutputTokens else { throw CleanupFailure.outputLimitReached }
+            guard !limitReached else { throw CleanupFailure.outputLimitReached }
             let output = settings.thinking ? Self.removingReasoning(result.output) : result.output
             return CleanupOutput.removingStringEnvelope(output, original: request.rawText)
                 .trimmingCharacters(in: .whitespacesAndNewlines)

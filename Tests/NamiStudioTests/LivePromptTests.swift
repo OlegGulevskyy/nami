@@ -1,7 +1,6 @@
 import Foundation
 import Testing
 import NamiCore
-import NamiAppleCleanup
 import NamiMLXCleanup
 @testable import NamiStudio
 
@@ -16,14 +15,11 @@ private final class LivePromptBundleMarker: NSObject {}
     let service = CleanupService()
     let store = PromptStore(directory: directory)
     service.promptStore = store
-    var engines: [CleanupEngine] = QwenModel.allCases.filter { QwenModelAssets.isInstalled($0) }.map(\.engine)
-    if AppleCleanup.unavailableReason == nil { engines.append(.apple) }
+    let engines: [CleanupEngine] = QwenModel.allCases.filter { QwenModelAssets.isInstalled($0) }.map(\.engine)
     try #require(!engines.isEmpty, "No installed local models available for prompt verification")
     var config = PromptConfiguration()
     config[.qwenSystem] = "Fix capitalization and punctuation. Return only the edited sentence."
-    config[.appleSystem] = "Fix capitalization and punctuation. Return only the edited sentence."
     config[.cleanupUser] = "Please edit: {{transcript}}"
-    config[.appleOutput] = "The edited sentence, with punctuation."
     #expect(store.save(configuration: config, playgroundVocabulary: ""))
     for engine in engines {
         service.prewarm(engine)
@@ -34,6 +30,5 @@ private final class LivePromptBundleMarker: NSObject {}
         let record = try #require(store.records.first { $0.requestID == request.id })
         #expect(record.messages.first?.content == config[.qwenSystem])
         #expect(record.messages[1].content == "Please edit: \"please check the deployment\"")
-        if engine == .apple { #expect(record.messages.last?.content == config[.appleOutput]) }
     }
 }

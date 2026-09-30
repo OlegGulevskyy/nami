@@ -2,14 +2,35 @@ import SwiftUI
 
 /// One stationary date above the scrolling transcripts. Measure rows rather than
 /// section headers: a lazy stack may discard a header during a long day's history.
+/// `runs` is the whole (already searched) history, newest first; only a growing
+/// prefix is laid out so long histories scroll smoothly.
 struct RecordingHistoryTimeline<Row: View>: View {
-    let groups: [(date: Date, runs: [RecordingRun])]
+    static var pageSize: Int { 20 }
+
+    let runs: [RecordingRun]
     @ViewBuilder var row: (RecordingRun) -> Row
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.calendar) private var calendar
     @State private var activeDate: Date?
     @State private var movingToOlderDate = true
+    @State private var visibleCount = pageSize
     @Namespace private var scrollSpace
+
+    private var groups: [(date: Date, runs: [RecordingRun])] {
+        Self.grouped(runs.prefix(visibleCount), calendar: calendar)
+    }
+
+    /// Groups consecutive runs by day, preserving the newest-first order.
+    static func grouped(_ runs: ArraySlice<RecordingRun>, calendar: Calendar) -> [(date: Date, runs: [RecordingRun])] {
+        var groups: [(date: Date, runs: [RecordingRun])] = []
+        for run in runs {
+            let day = calendar.startOfDay(for: run.date)
+            if groups.last?.date == day { groups[groups.count - 1].runs.append(run) }
+            else { groups.append((date: day, runs: [run])) }
+        }
+        return groups
+    }
 
     private var displayedDate: Date? {
         if let activeDate, groups.contains(where: { $0.date == activeDate }) {
@@ -19,6 +40,7 @@ struct RecordingHistoryTimeline<Row: View>: View {
     }
 
     var body: some View {
+        let groups = self.groups
         VStack(alignment: .leading, spacing: 0) {
             if let date = displayedDate {
                 HistoryDateHeader(date: date, movingDown: movingToOlderDate)
@@ -41,6 +63,13 @@ struct RecordingHistoryTimeline<Row: View>: View {
                                     }
                                 }
                         }
+                    }
+                    if visibleCount < runs.count {
+                        // A new identity per page so the sentinel fires again when
+                        // the loaded rows still don't fill the viewport.
+                        Color.clear.frame(height: 1)
+                            .id(visibleCount)
+                            .onAppear { visibleCount = min(visibleCount + Self.pageSize, runs.count) }
                     }
                 }
             }

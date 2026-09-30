@@ -21,14 +21,13 @@ let package = Package(
         .target(name: "NamiCore"),
         .target(name: "NamiAudio", dependencies: ["NamiCore"]),
         .target(name: "NamiStudio", dependencies: [
-            "NamiCore", "NamiAudio", "NamiWhisperKit", "NamiAppleCleanup", "NamiMLXCleanup",
+            "NamiCore", "NamiAudio", "NamiWhisperKit", "NamiMLXCleanup",
             .product(name: "Sparkle", package: "Sparkle"),
             .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
         ], resources: [.copy("Resources/Fonts"), .copy("Resources/nami-logo.svg")]),
         .target(name: "NamiWhisperKit", dependencies: [
             "NamiCore", .product(name: "WhisperKit", package: "argmax-oss-swift"),
         ]),
-        .target(name: "NamiAppleCleanup", dependencies: ["NamiCore"]),
         .target(name: "NamiMLXCleanup", dependencies: ["NamiCore",
             .product(name: "MLXLLM", package: "mlx-swift-lm"),
             .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -40,7 +39,6 @@ let package = Package(
         .testTarget(name: "NamiCoreTests", dependencies: ["NamiCore", "NamiAudio"]),
         .testTarget(name: "NamiStudioTests", dependencies: ["NamiStudio"]),
         .testTarget(name: "NamiWhisperKitTests", dependencies: ["NamiWhisperKit", "NamiCore"]),
-        .testTarget(name: "NamiAppleCleanupTests", dependencies: ["NamiAppleCleanup", "NamiCore"]),
         .testTarget(name: "NamiMLXCleanupTests", dependencies: ["NamiMLXCleanup", "NamiCore"]),
     ]
 )

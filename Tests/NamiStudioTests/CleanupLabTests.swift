@@ -29,10 +29,11 @@ private actor RecordingCleanupProcessor: TextProcessor {
     let directory = cleanupTestDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let raw = "Please update the minor version in the POM file, without committing."
-    let apple = RecordingCleanupProcessor(identifier: "apple-wiring-test", output: "Update the minor version in the POM file without committing.")
     let qwen = RecordingCleanupProcessor(identifier: "qwen-wiring-test", output: raw)
-    let service = CleanupService(processors: [.apple: apple, .qwen: qwen])
+    let large = RecordingCleanupProcessor(identifier: "qwen17-wiring-test", output: "Update the minor version in the POM file without committing.")
+    let service = CleanupService(processors: [.qwen: qwen, .qwen17: large])
     let lab = CleanupLabSession(directory: directory, service: service)
+    lab.compareQwen17 = true
     lab.input = raw
     lab.compare()
     try await awaitCleanup(lab)
@@ -48,9 +49,9 @@ private actor RecordingCleanupProcessor: TextProcessor {
     reopened.compare()
     try await awaitCleanup(reopened)
     let qwenRequest = try #require(await qwen.requests.last)
-    let appleRequest = try #require(await apple.requests.last)
+    let largeRequest = try #require(await large.requests.last)
     #expect(qwenRequest.memory.examples == [example])
-    #expect(appleRequest.memory.examples == [example])
+    #expect(largeRequest.memory.examples == [example])
     #expect(CleanupPrompt.input(qwenRequest, highlightEdits: true).contains("Replace \"POM\" with \"“pom.xml”\" in the transcript."))
     reopened.useMemory = false
     reopened.compare()
@@ -112,6 +113,23 @@ private actor RecordingCleanupProcessor: TextProcessor {
     #expect(CleanupLabSession(directory: directory).memory.vocabulary.first?.replacement == "Nami")
 }
 
+@Test @MainActor func cleanupLabLoadsWorkspaceSavedWithRemovedAppleEngine() throws {
+    let directory = cleanupTestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let lab = CleanupLabSession(directory: directory)
+    lab.addVocabulary(heard: "name me", replacement: "Nami")
+    let file = directory.appendingPathComponent("workspace.json")
+    var workspace = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+    workspace["comparisonEngines"] = ["apple", "qwen17"]
+    try JSONSerialization.data(withJSONObject: workspace).write(to: file)
+    let restored = CleanupLabSession(directory: directory)
+    #expect(!restored.loadFailed)
+    #expect(!restored.compareQwen && restored.compareQwen17)
+    #expect(restored.memory.vocabulary.first?.replacement == "Nami")
+    let settings = try JSONDecoder().decode(StudioSettings.self, from: Data(#"{"cleanupEngine":"apple"}"#.utf8))
+    #expect(settings.cleanupEngine == .automatic)
+}
+
 @Test @MainActor func cleanupLabPreservesCorruptData() throws {
     let directory = cleanupTestDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -129,7 +147,7 @@ private actor RecordingCleanupProcessor: TextProcessor {
 }
 
 private struct PreviewCleanupProcessor: TextProcessor {
-    var identifier = "apple-system-cleanup-v2"
+    var identifier = "qwen3-preview"
     func prepare() async throws {}
     func process(_ request: CleanupRequest) async throws -> String { "Can you check the Nami deployment? We need two instances." }
 }
@@ -146,7 +164,7 @@ private struct PreviewCleanupProcessor: TextProcessor {
         permissions: StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
             requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
         pastePreparer: { { _, _ in .targetUnavailable } },
-        cleanupProcessors: [.apple: PreviewCleanupProcessor(), .qwen: PreviewCleanupProcessor(identifier: "qwen3-preview"),
+        cleanupProcessors: [.qwen: PreviewCleanupProcessor(),
                             .qwen17: PreviewCleanupProcessor(identifier: "qwen3-1.7b-preview")],
         captureBuilder: { _ in PreviewAudioCapture() }, clipboardWriter: { _ in true })
     let lab = studio.debugging.cleanupLab

@@ -82,16 +82,42 @@ final class PromptStore {
         }
     }
 
+    /// Inserts a new request, or updates it in place when the provider reports its response.
     func record(_ record: ModelPromptRecord) {
-        records.insert(record, at: 0)
-        records = Array(records.prefix(200))
+        if let index = records.firstIndex(where: { $0.id == record.id }) {
+            var record = record
+            // A deadline outcome can arrive before the provider's late response.
+            record.outcome = record.outcome ?? records[index].outcome
+            records[index] = record
+        } else {
+            records.insert(record, at: 0)
+            records = Array(records.prefix(200))
+        }
         // Bound local storage without truncating any individual request.
-        while records.count > 1 && records.reduce(0, { $0 + $1.messages.reduce(0) { $0 + $1.content.utf8.count } }) > 8_000_000 {
+        while records.count > 1 && records.reduce(0, { $0 + $1.storedBytes }) > 8_000_000 {
             records.removeLast()
         }
+        persist()
+    }
+
+    /// Attaches Nami's validation outcome to the latest request this result came from.
+    func record(_ result: CleanupResult) {
+        guard let index = records.firstIndex(where: { $0.requestID == result.id && $0.provider == result.provider && $0.outcome == nil }) else { return }
+        records[index].outcome = .init(outcome: result.outcome.rawValue, text: result.text, reason: result.reason,
+            totalSeconds: result.elapsedSeconds, preparationSeconds: result.preparationSeconds)
+        persist()
+    }
+
+    private func persist() {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             try JSONEncoder().encode(records).write(to: historyURL, options: .atomic)
         } catch { errorMessage = "Prompt history is available this session but could not be saved: \(error.localizedDescription)" }
+    }
+}
+
+private extension ModelPromptRecord {
+    var storedBytes: Int {
+        messages.reduce(0) { $0 + $1.content.utf8.count } + (response?.output.utf8.count ?? 0) + (outcome?.text.utf8.count ?? 0)
     }
 }
