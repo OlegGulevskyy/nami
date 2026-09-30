@@ -8,11 +8,14 @@ public actor QwenTextProcessor: TextProcessor {
     public nonisolated let identifier: String
     private let model: QwenModel
     private let directory: URL
+    private let speculativeDecoding: Bool
     private var container: ModelContainer?
     private var loading: Task<ModelContainer, Error>?
+    private var promptCache = DraftGeneration.PromptCache()
 
-    public init(model: QwenModel = .qwen06, directory: URL? = nil) {
+    public init(model: QwenModel = .qwen06, directory: URL? = nil, speculativeDecoding: Bool = true) {
         self.model = model
+        self.speculativeDecoding = speculativeDecoding
         self.identifier = model.processorID
         self.directory = directory ?? QwenModelAssets.directory(for: model)
     }
@@ -41,6 +44,7 @@ public actor QwenTextProcessor: TextProcessor {
         if let loading { _ = try? await loading.value }
         loading = nil
         container = nil
+        promptCache = DraftGeneration.PromptCache()
         GPU.clearCache()
     }
 
@@ -54,6 +58,9 @@ public actor QwenTextProcessor: TextProcessor {
         try await prepare()
         guard let container else { throw CleanupFailure.unavailable("Qwen could not load.") }
         let identifier = self.identifier
+        let speculativeDecoding = self.speculativeDecoding && (model == .qwen17 || model == .qwen4)
+        let promptCache = model == .qwen4 ? self.promptCache : nil
+        let blockSize = model == .qwen4 ? 32 : 4
         let settings = request.prompts.qwenGeneration.clamped
         return try await container.perform { context in
             try Task.checkCancellation()
@@ -77,8 +84,14 @@ public actor QwenTextProcessor: TextProcessor {
             let started = ContinuousClock.now
             let result: GenerateResult
             do {
-                result = try MLXLMCommon.generate(input: input, parameters: parameters, context: context) { (_: [Int]) in
-                    Task.isCancelled ? .stop : .more
+                if speculativeDecoding && !settings.thinking && (promptCache == nil || settings.temperature == 0) {
+                    let draft = request.memory.replacingVocabulary(in: request.rawText, language: request.language)
+                    result = try DraftGeneration.generate(input: input, draft: context.tokenizer.encode(text: draft),
+                        parameters: parameters, context: context, blockSize: blockSize, promptCache: promptCache)
+                } else {
+                    result = try MLXLMCommon.generate(input: input, parameters: parameters, context: context) { (_: [Int]) in
+                        Task.isCancelled ? .stop : .more
+                    }
                 }
             } catch {
                 await request.promptObserver?(record.responding(.init(output: "", error: error.localizedDescription,

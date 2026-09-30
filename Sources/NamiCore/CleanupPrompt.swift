@@ -89,7 +89,24 @@ public enum CleanupOutput {
     public static func isSeverelyTruncated(_ output: String, original: String) -> Bool {
         let originalWords = original.split(whereSeparator: \.isWhitespace).count
         let outputWords = output.split(whereSeparator: \.isWhitespace).count
-        return originalWords >= 6 && outputWords * 5 < originalWords * 2
+        guard originalWords >= 6 && outputWords * 5 < originalWords * 2 else { return false }
+        return !isRestatedCorrection(output, original: original)
+    }
+
+    /// Repeated false starts can be longer than their complete correction. Allow
+    /// a literal corrected suffix only when it retains every non-disfluency word;
+    /// a short summary or an unrelated final sentence still fails the length gate.
+    private static func isRestatedCorrection(_ output: String, original: String) -> Bool {
+        func words(_ text: String) -> [String] {
+            text.lowercased().split(whereSeparator: \.isWhitespace)
+                .map { $0.trimmingCharacters(in: .punctuationCharacters) }.filter { !$0.isEmpty }
+        }
+        let before = words(original), after = words(output)
+        guard after.count >= 4, before.suffix(after.count).elementsEqual(after) else { return false }
+        let cue = " " + before.filter { !["um", "uh", "erm"].contains($0) }.joined(separator: " ") + " "
+        guard cue.contains(" actually no ") || cue.contains(" no sorry ") else { return false }
+        let disfluencies: Set<String> = ["um", "uh", "erm", "actually", "no", "sorry"]
+        return Set(before).subtracting(disfluencies).isSubset(of: Set(after))
     }
 
     /// A chat model may quote its entire answer as a JSON string. Decode only

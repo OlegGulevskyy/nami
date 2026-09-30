@@ -53,7 +53,7 @@ assembled request to that same model is on the right. The preview updates as you
 type; switch between **Your draft** and **Currently saved** to compare them.
 
 Cleanup shows the system prompt, user message template, and sample transcript.
-Both Qwen models share the system prompt and user message template. Advanced
+The Qwen models share the system prompt and user message template. Advanced
 settings contain saved-correction templates. **Generation settings** holds the
 decoding options sent with each request: thinking, temperature, top-p, seed,
 repetition penalty and maximum output, plus the cleanup deadline. The preview lists these parameters under the
@@ -230,6 +230,62 @@ NAMI_TEST_STREAM_REPORT="/tmp/nami-streaming-replay.json" \
 
 The report measures warm batch decode versus time from the last replayed audio buffer
 to the final live transcript. It excludes history writes, text cleanup, and pasting.
+
+**Fast local dictation:** in Models, download **Parakeet Ultra** and choose **Use
+for dictation**. Keep a Whisper model installed: uncertain acronyms and close
+matches to your vocabulary are verified against the complete recording with
+Whisper. Parakeet supports 25 European languages; an explicitly selected language
+outside that set uses Whisper. Automatic language detection on this path is
+limited to Parakeet's languages. Choose Whisper for other languages.
+
+With Qwen 1.7B or **Qwen 3 · 4B Instruct** cleanup, thinking disabled and
+temperature **0**, Nami can prepare
+cleanup while you speak. It reuses that work only when the complete final
+transcript, language, prompts and saved corrections match exactly. Changed
+endings are recognized and cleaned again; no provisional words are committed or
+inserted. On Stop, obsolete cleanup is cancelled while final recognition runs.
+Qwen verifies proposed tokens copied from the transcript; the 4B model can also
+propose its previous answer and reuse an exactly matching causal prompt prefix.
+Every proposed token is checked by the model. Batched floating-point evaluation
+can differ from ordinary generation, so validate the resulting text as well as
+latency when changing models, prompts or proposal sizes. The 0.6B model keeps its
+existing generation path. Model loading is local; only the explicit Download
+action accesses the network.
+
+The 4B Instruct model uses about 3–5 GB of memory. Its official separate chat
+template is embedded in the tokenizer configuration during installation for
+compatibility with the pinned Swift tokenizer. Cleanup quality still depends on
+the saved prompt: specify that hesitation sounds and accidental repetition are
+removed, spoken corrections keep the corrected version, and names, numbers,
+negation, uncertainty and unfinished thoughts are preserved.
+
+For the complete stop-to-paste-dispatch path, use the isolated real-time replay:
+
+```sh
+NAMI_TEST_PROJECT="$PWD" \
+NAMI_TEST_DEBUG_SETTINGS="$HOME/Library/Application Support/Nami/InternalDebugging" \
+NAMI_TEST_FAST_MODEL_FOLDER="$HOME/Library/Application Support/Nami/Models/parakeet-ultra" \
+NAMI_TEST_CLEANUP_ENGINE=qwen4 \
+NAMI_TEST_CLEANUP_TEMPERATURE=0 \
+NAMI_TEST_DICTATION_FILES="/path/to/fixture.wav" \
+NAMI_TEST_DICTATION_REPORT="/tmp/nami-dictation.json" \
+  swift test -c release --filter savedDictationEndToEndPerformance
+```
+
+Separate multiple audio paths with newlines. This copies settings and memory to
+a temporary directory and uses a private pasteboard and injected paste-event
+callback; it does not change the real clipboard, history, settings or focused
+document. The timing includes recognition, cleanup, history writes and paste
+preparation, but substitutes focus lookup and event dispatch and excludes the
+receiving app's rendering time. For the original
+Whisper and ordinary Qwen baseline, omit `NAMI_TEST_FAST_MODEL_FOLDER` and set
+`NAMI_TEST_BASELINE=1` with `NAMI_TEST_CLEANUP_ENGINE=qwen17`. Keep temperature
+and other inputs identical for an optimization-only comparison; report model or
+prompt changes separately when evaluating a complete configuration. Optional
+`NAMI_TEST_MAX_STOP_SECONDS` asserts a latency ceiling, and
+`NAMI_TEST_DICTATION_EXPECTATIONS` points to per-recording content constraints.
+Content checks are regression checks, not human-verified word error rates.
+Reports contain transcripts and prompts; keep them private.
 
 **Automatic paste:** click **Allow Accessibility…** in Nami or **Settings**,
 then enable **Nami** in **System Settings → Privacy & Security → Accessibility**.

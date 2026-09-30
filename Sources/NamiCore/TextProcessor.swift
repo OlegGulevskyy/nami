@@ -136,6 +136,14 @@ public actor CleanupRunner {
         }
     }
 
+    /// Join cancelled speculative work before sharing its processor with a final
+    /// request. Ordinary timeout handling intentionally does not wait for a model.
+    public func cancelAndWait() async {
+        if let id = activeID { cancel(id) }
+        let worker = worker
+        await worker?.value
+    }
+
     private func complete(_ id: UUID, request: CleanupRequest, started: ContinuousClock.Instant,
                           deadline: ContinuousClock.Instant, preparation: Double?, completion: Result<String, Error>) {
         guard activeID == id else { return }

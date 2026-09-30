@@ -43,7 +43,7 @@ final class CleanupService {
     func folder(for model: QwenModel) -> URL { QwenModelAssets.directory(for: model, root: modelsRoot) }
     func isInstalled(_ engine: CleanupEngine) -> Bool { installed.contains(engine) }
     var automaticEngine: CleanupEngine {
-        installed.contains(.qwen) ? .qwen : (installed.contains(.qwen17) ? .qwen17 : .vocabulary)
+        installed.contains(.qwen) ? .qwen : (installed.contains(.qwen17) ? .qwen17 : (installed.contains(.qwen4) ? .qwen4 : .vocabulary))
     }
 
     func downloadQwen(_ engine: CleanupEngine = .qwen) {
@@ -86,6 +86,20 @@ final class CleanupService {
             defer { self?.warming = false; self?.warmTask = nil }
             try? await processor.prepare()
         }
+    }
+
+    func speculation(id: UUID, language: String, memory: CleanupMemory, engine: CleanupEngine, timeout: Double) -> SpeculativeCleanup? {
+        let selected = engine == .automatic ? automaticEngine : engine
+        let prompts = promptStore?.configuration ?? .init()
+        // Only the validated, cooperative local model participates. Deterministic
+        // sampling makes moving work earlier independent of other random draws.
+        guard (selected == .qwen17 || selected == .qwen4), prompts.qwenGeneration.temperature == 0,
+              !prompts.qwenGeneration.thinking, let processor = processors[selected] else { return nil }
+        var request = CleanupRequest(id: id, rawText: "", language: language, memory: memory)
+        request.prompts = prompts
+        request.promptObserver = promptStore?.observer(source: "Speculative dictation cleanup")
+        return SpeculativeCleanup(processor: processor, request: request,
+            timeout: .seconds(min(30, max(0.05, timeout.isFinite ? timeout : 1))))
     }
 
     func run(_ request: CleanupRequest, engine: CleanupEngine, timeout: Double, source: String = "Cleanup") async throws -> CleanupResult {

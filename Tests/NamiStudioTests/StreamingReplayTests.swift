@@ -14,6 +14,14 @@ import NamiWhisperKit
     let paths = try #require(environment["NAMI_TEST_STREAM_AUDIO_FILES"]).split(separator: "\n")
     let engine = WhisperKitEngine(modelFolder: model)
     try await engine.prepare()
+    let language = environment["NAMI_TEST_LANGUAGE"] ?? "en"
+    let records = OSAllocatedUnfairLock(initialState: [ModelPromptRecord]())
+    await engine.setPromptObserver { record in
+        records.withLock { stored in
+            if let index = stored.firstIndex(where: { $0.id == record.id }) { stored[index] = record }
+            else { stored.append(record) }
+        }
+    }
     var report: [[String: Any]] = []
     for path in paths {
         let samples = try AudioFile.read(URL(fileURLWithPath: String(path)))
@@ -22,12 +30,12 @@ import NamiWhisperKit
         // Warm the decoder before timing either path.
         do {
             let id = UUID()
-            try await engine.start(sessionID: id, language: "en", vocabulary: vocabulary, onPartial: nil)
+            try await engine.start(sessionID: id, language: language == "auto" ? nil : language, vocabulary: vocabulary, onPartial: nil)
             try await engine.append(AudioChunk(samples: Array(samples.prefix(32_000)), timestamp: 0), sessionID: id)
             _ = try await engine.finish(sessionID: id)
         }
         let batchID = UUID()
-        try await engine.start(sessionID: batchID, language: "en", vocabulary: vocabulary, onPartial: nil)
+        try await engine.start(sessionID: batchID, language: language == "auto" ? nil : language, vocabulary: vocabulary, onPartial: nil)
         try await engine.append(AudioChunk(samples: samples, timestamp: 0), sessionID: batchID)
         let batchStart = ContinuousClock.now
         let batch = try await engine.finish(sessionID: batchID)
@@ -35,7 +43,8 @@ import NamiWhisperKit
 
         let partials = OSAllocatedUnfairLock(initialState: (count: 0, firstSeconds: 0.0))
         let liveID = UUID(), replayStart = ContinuousClock.now
-        try await engine.startLive(sessionID: liveID, language: "en", vocabulary: vocabulary) { _ in
+        records.withLock { $0 = [] }
+        try await engine.startLive(sessionID: liveID, language: language == "auto" ? nil : language, vocabulary: vocabulary) { _ in
             partials.withLock {
                 if $0.count == 0 { $0.firstSeconds = seconds(since: replayStart) }
                 $0.count += 1
@@ -52,12 +61,19 @@ import NamiWhisperKit
         let stopSeconds = seconds(since: stop)
         let updates = partials.withLock { $0 }
         #expect(!live.isEmpty)
+        let comparison = TranscriptAnalysis.compare(reference: batch, hypothesis: live)
+        if environment["NAMI_TEST_STREAM_REQUIRE_BATCH_MATCH"] == "1" {
+            #expect(comparison.normalizedMatch, "Live transcript differs from batch: \(live)")
+        }
         if samples.count > 5 * 16_000 { #expect(updates.count > 0) }
         let row: [String: Any] = [
             "audio": String(path), "audioSeconds": Double(samples.count) / AudioChunk.sampleRate,
             "batchSeconds": batchSeconds, "streamingStopSeconds": stopSeconds,
             "partialCount": updates.count, "firstPartialSeconds": updates.firstSeconds,
-            "batchTranscript": batch, "streamingTranscript": live
+            "batchTranscript": batch, "streamingTranscript": live,
+            "language": language, "vocabulary": vocabulary,
+            "batchComparison": try JSONSerialization.jsonObject(with: JSONEncoder().encode(comparison)),
+            "decodes": try JSONSerialization.jsonObject(with: JSONEncoder().encode(records.withLock { $0 }))
         ]
         report.append(row)
         print("Streaming replay: audio=\(Double(samples.count) / AudioChunk.sampleRate)s batch=\(batchSeconds)s stop=\(stopSeconds)s partials=\(updates.count)")

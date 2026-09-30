@@ -22,11 +22,16 @@ private func fakeDownload(_ url: URL, model: QwenModel) throws -> (URL, URLRespo
     defer { try? FileManager.default.removeItem(at: root) }
     #expect(QwenModel.qwen06.processorID != QwenModel.qwen17.processorID)
     #expect(CleanupEngine.title(for: QwenModel.qwen17.processorID) == CleanupEngine.qwen17.title)
+    #expect(CleanupEngine.title(for: QwenModel.qwen4.processorID) == CleanupEngine.qwen4.title)
     for model in QwenModel.allCases {
         let folder = QwenModelAssets.directory(for: model, root: root)
         #expect(!QwenModelAssets.isInstalled(model, at: folder))
         try await QwenModelAssets.download(model, to: folder, fetch: { try fakeDownload($0, model: model) })
         #expect(QwenModelAssets.isInstalled(model, at: folder))
+        if model == .qwen4 {
+            let config = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("tokenizer_config.json"))) as? [String: Any])
+            #expect(config["chat_template"] as? String == "{}")
+        }
         #expect(!QwenModelAssets.isInstalled(model == .qwen06 ? .qwen17 : .qwen06, at: folder))
         // An installed model is reused without network requests.
         try await QwenModelAssets.download(model, to: folder, fetch: { _ in throw CancellationError() })

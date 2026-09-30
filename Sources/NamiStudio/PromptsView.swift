@@ -167,7 +167,7 @@ struct PromptsView: View {
                 tab(model.title, selected: destination == model) { destination = model }
             }
             Spacer()
-            Text(destination == .qwen ? "Shared by 0.6B & 1.7B" : destination == .elevenLabs ? "Cloud · Scribe v2" : "On this Mac")
+            Text(destination == .qwen ? "Shared by Qwen cleanup models" : destination == .elevenLabs ? "Cloud · Scribe v2" : "On this Mac")
                 .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
         }
     }

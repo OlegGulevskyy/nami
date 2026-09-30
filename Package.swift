@@ -14,6 +14,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.0"),
         .package(url: "https://github.com/argmaxinc/argmax-oss-swift.git", exact: "1.1.0"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.4"),
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", exact: "3.1.0"),
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "2.29.3"),
     ],
@@ -27,6 +28,7 @@ let package = Package(
         ], resources: [.copy("Resources/Fonts"), .copy("Resources/nami-logo.svg")]),
         .target(name: "NamiWhisperKit", dependencies: [
             "NamiCore", .product(name: "WhisperKit", package: "argmax-oss-swift"),
+            .product(name: "FluidAudio", package: "FluidAudio"),
         ]),
         .target(name: "NamiMLXCleanup", dependencies: ["NamiCore",
             .product(name: "MLXLLM", package: "mlx-swift-lm"),

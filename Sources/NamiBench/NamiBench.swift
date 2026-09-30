@@ -136,7 +136,7 @@ struct NamiBench {
         }
         var config = EngineConfiguration()
         guard let backend = EngineConfiguration.Backend(rawValue: args.options["engine"] ?? project.engine ?? "whisperkit") else {
-            throw CLIError("Engine must be whisperkit or fake.")
+            throw CLIError("Engine must be fast, whisperkit, or fake.")
         }
         config.backend = backend
         if let override = args.options["model-folder"] {

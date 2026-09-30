@@ -10,16 +10,18 @@ struct ModelsView: View {
     @State private var error: String?
     @State private var browse = false
     @State private var search = ""
+    @State private var fastInstalled = FastTranscriptionEngine.installed
+    @State private var fastDownload: Task<Void, Never>?
     @Environment(\.studioPageVisible) private var visible
     private var service: CleanupService { session.cleanupService }
     private var locked: Bool { session.busyForUpdate }
     private enum Deletion: Identifiable {
-        case whisper(TranscriptionModel), qwen(QwenModel)
+        case whisper(TranscriptionModel), qwen(QwenModel), fast
         var id: String {
-            switch self { case .whisper(let model): model.id; case .qwen(let model): model.id }
+            switch self { case .whisper(let model): model.id; case .qwen(let model): model.id; case .fast: "parakeet-ultra" }
         }
         var title: String {
-            switch self { case .whisper(let model): model.name; case .qwen(let model): model.engine.title }
+            switch self { case .whisper(let model): model.name; case .qwen(let model): model.engine.title; case .fast: "Parakeet Ultra" }
         }
     }
 
@@ -58,6 +60,7 @@ struct ModelsView: View {
                         StudioSectionHeader(title: "Transcription")
                         Button("Add folder…", action: chooseFolder).disabled(locked)
                     }
+                    fastRow
                     DisclosureGroup("Browse more transcription models", isExpanded: $browse) {
                         VStack(alignment: .leading, spacing: 12) {
                             TextField("Filter model names", text: $search)
@@ -81,7 +84,7 @@ struct ModelsView: View {
                 }
             }.padding(28).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
         }
-        .onStudioPageVisibility(appear: session.refreshModels)
+        .onStudioPageVisibility(appear: { session.refreshModels(); fastInstalled = FastTranscriptionEngine.installed })
         // While hidden, showing the page refreshes instead.
         .onChange(of: session.debugging.isBusy) { if visible && !session.debugging.isBusy { session.refreshModels() } }
         .onChange(of: session.settings.modelFolder) { if visible { session.refreshModels() } }
@@ -96,8 +99,48 @@ struct ModelsView: View {
         }
     }
 
+    private var fastRow: some View {
+        let selected = session.settings.engine == "fast"
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Parakeet Ultra").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                stateLabel(fastDownload != nil ? "Downloading…" : fastInstalled ? (selected ? "Installed · selected" : "Installed") : "Not installed", ready: fastInstalled)
+            }
+            Text("Fast, on-device dictation in 25 European languages. Your Whisper model checks uncertain names and handles other selected languages.")
+                .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+            HStack(spacing: 12) {
+                if fastDownload != nil {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel download") { fastDownload?.cancel() }
+                } else if fastInstalled {
+                    Button(selected ? "Selected" : "Use for dictation") { session.settings.engine = "fast" }
+                        .disabled(locked || selected || session.settings.modelFolder.isEmpty)
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([FastTranscriptionEngine.modelDirectory]) }
+                    Spacer()
+                    Button("Delete…", role: .destructive) { deletion = .fast }.disabled(locked)
+                } else {
+                    Text("~630 MB download").foregroundStyle(StudioStyle.quiet)
+                    Spacer()
+                    Button("Download") {
+                        fastDownload = Task {
+                            defer { fastDownload = nil; fastInstalled = FastTranscriptionEngine.installed }
+                            do { try await FastTranscriptionEngine.download() }
+                            catch is CancellationError {}
+                            catch { self.error = error.localizedDescription }
+                        }
+                    }.studioProminentButton().disabled(locked)
+                }
+            }.font(.system(size: 12))
+            if session.settings.modelFolder.isEmpty {
+                Text("Choose a Whisper model below for verification first.").font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+            }
+        }.padding(18).background(.white, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
+    }
+
     private func whisperRow(_ model: TranscriptionModel) -> some View {
-        let selected = !session.settings.modelFolder.isEmpty &&
+        let selected = session.settings.engine == "whisperkit" && !session.settings.modelFolder.isEmpty &&
             URL(fileURLWithPath: session.settings.modelFolder).standardizedFileURL == model.folder.standardizedFileURL
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
@@ -165,11 +208,18 @@ struct ModelsView: View {
                     ProgressView().controlSize(.small)
                     Button("Cancel download") { service.cancelDownload() }
                 } else if installed {
-                    Button(included ? "Included in comparison" : "Add to comparison") {
-                        if model == .qwen06 { session.debugging.cleanupLab.compareQwen = true }
-                        else { session.debugging.cleanupLab.compareQwen17 = true }
-                        session.debugging.cleanupLab.savePreferences()
-                    }.disabled(locked || included)
+                    if model == .qwen4 {
+                        Button(session.settings.cleanupEngine == .qwen4 ? "Selected for cleanup" : "Use for cleanup") {
+                            session.settings.cleanupEngine = .qwen4
+                            session.settings.cleanupEnabled = true
+                        }.disabled(locked || session.settings.cleanupEngine == .qwen4)
+                    } else {
+                        Button(included ? "Included in comparison" : "Add to comparison") {
+                            if model == .qwen06 { session.debugging.cleanupLab.compareQwen = true }
+                            else { session.debugging.cleanupLab.compareQwen17 = true }
+                            session.debugging.cleanupLab.savePreferences()
+                        }.disabled(locked || included)
+                    }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([service.folder(for: model)]) }
                 } else if !hasFiles {
                     Button("Download") { service.downloadQwen(model.engine) }
@@ -204,6 +254,9 @@ struct ModelsView: View {
                 switch item {
                 case .whisper(let model): try await session.deleteTranscriptionModel(model)
                 case .qwen(let model): try await session.deleteCleanupModel(model)
+                case .fast:
+                    try await session.deleteFastModel()
+                    fastInstalled = FastTranscriptionEngine.installed
                 }
             } catch { self.error = error.localizedDescription }
         }

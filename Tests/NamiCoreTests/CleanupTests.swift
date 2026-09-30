@@ -42,6 +42,18 @@ private struct FixedCleanupProcessor: TextProcessor {
     #expect(result.rejectedText == leaked)
 }
 
+@Test func cleanupAllowsShortCorrectedSuffixOnlyWhenAllContentSurvives() {
+    let raw = "Um what I would like, um actually no not what I would like, what I would not like is"
+    #expect(CleanupOutput.rejectionReason("What I would not like is.", original: raw) == nil)
+    for original in [
+        "Remember to back up the database and retain the logs. Actually no, what I would not like is",
+        "I would not deploy this on Friday because customers will still be testing. Actually no, please deploy this on Monday.",
+        "Sorry I am late for this very important project planning meeting. What I would not like is",
+    ] {
+        #expect(CleanupOutput.isSeverelyTruncated("What I would not like is.", original: original))
+    }
+}
+
 @Test func cleanupRejectedResponsePersistsWithoutBreakingLegacyResults() async throws {
     let result = try await CleanupRunner(processor: FixedCleanupProcessor(output: "```text\nHello\n```"))
         .run(.init(rawText: "hello"))

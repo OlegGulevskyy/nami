@@ -3,7 +3,7 @@ import NamiCore
 @preconcurrency import WhisperKit
 
 public struct EngineConfiguration: Sendable {
-    public enum Backend: String, Sendable { case whisperkit, fake }
+    public enum Backend: String, Sendable { case whisperkit, fast, fake }
     public var backend: Backend = .whisperkit
     public var modelFolder: String?
     public var fakeTranscript = "This is a fake transcript."
@@ -15,6 +15,9 @@ public enum EngineFactory {
     public static func make(_ configuration: EngineConfiguration) throws -> any TranscriptionEngine {
         switch configuration.backend {
         case .fake: return FakeTranscriptionEngine(transcript: configuration.fakeTranscript)
+        case .fast:
+            guard let folder = configuration.modelFolder else { throw EngineError.modelUnavailable("Choose a Whisper verification model first.") }
+            return FastTranscriptionEngine(verifier: WhisperKitEngine(modelFolder: folder))
         case .whisperkit:
             guard let folder = configuration.modelFolder else {
                 throw EngineError.modelUnavailable("Run download to configure a model, set modelFolder in nami.json, or pass --model-folder.")

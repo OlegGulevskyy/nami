@@ -155,7 +155,7 @@ public final class StudioSession {
         self.engineBuilder = engineBuilder ?? { settings in
             var config = EngineConfiguration()
             guard let backend = EngineConfiguration.Backend(rawValue: settings.engine) else {
-                throw StudioError.message("Choose WhisperKit or the demo engine.")
+                throw StudioError.message("Choose fast dictation, WhisperKit, or the demo engine.")
             }
             config.backend = backend
             config.modelFolder = settings.modelFolder
@@ -199,7 +199,7 @@ public final class StudioSession {
     public var selectedRun: RecordingRun? { runs.first { $0.id == selectedRunID } ?? runs.first }
     public var selectedPrompt: ReadingPrompt? { prompts.first { $0.id == selectedPromptID } }
     public var modelName: String {
-        settings.engine == "fake" ? "Demo engine" : (settings.modelFolder.isEmpty ? "Choose a model folder" : URL(fileURLWithPath: settings.modelFolder).lastPathComponent)
+        settings.engine == "fake" ? "Demo engine" : settings.engine == "fast" ? "Parakeet Ultra · Whisper verification" : (settings.modelFolder.isEmpty ? "Choose a model folder" : URL(fileURLWithPath: settings.modelFolder).lastPathComponent)
     }
     public var selectedMicrophoneUnavailable: Bool {
         guard let uid = settings.microphoneUID else { return false }
@@ -246,7 +246,7 @@ public final class StudioSession {
 
     private func prepareInBackground() {
         guard !modelMaintenance else { return }
-        guard settings.engine != "whisperkit" || !settings.modelFolder.isEmpty else { return }
+        guard settings.engine == "fake" || !settings.modelFolder.isEmpty else { return }
         do { _ = try preparationFor(settings) }
         catch { modelPreparationError = error.localizedDescription }
     }
@@ -294,6 +294,10 @@ public final class StudioSession {
             var samples: [Float] = []
             var stats = AudioStatistics()
             var rawText: String?
+            let speculative = options.cleanupEnabled && options.engine == "fast" ? self.cleanupService.speculation(
+                id: id, language: options.language,
+                memory: options.cleanupUseMemory ? self.debugging.cleanupLab.memory : CleanupMemory(),
+                engine: options.cleanupEngine, timeout: options.cleanupTimeoutSeconds) : nil
             let liveAudio = AsyncThrowingStream<AudioChunk, Error>.makeStream()
             var feeding: Task<Void, Error>?
             defer { liveAudio.continuation.finish(); feeding?.cancel() }
@@ -319,8 +323,12 @@ public final class StudioSession {
                     let engine = try await preparation.value()
                     try self.check(id)
                     await engine.setPromptObserver(self.debugging.promptStore.observer(source: "Live dictation"))
+                    let onPartial: (@Sendable (String) -> Void)?
+                    if let speculative {
+                        onPartial = { text in Task { @MainActor in speculative.offer(text) } }
+                    } else { onPartial = nil }
                     try await engine.startLive(sessionID: id, language: options.language == "auto" ? nil : options.language,
-                                               vocabulary: options.vocabulary, onPartial: nil)
+                                               vocabulary: options.vocabulary, onPartial: onPartial)
                     for try await chunk in liveAudio.stream {
                         try self.check(id)
                         try await engine.append(chunk, sessionID: id)
@@ -352,6 +360,7 @@ public final class StudioSession {
                     self.averageDB = stats.rmsDBFS
                 }
                 self.ticker?.cancel()
+                speculative?.recordingEnded()
                 liveAudio.continuation.finish()
                 capture.stop()
                 self.capture = nil
@@ -380,8 +389,10 @@ public final class StudioSession {
                 rawText = text
                 try await self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
                               latency: Self.seconds(since: stop), input: self.inputName,
-                              options: options, prompt: prompt, paste: paste, allowsPin: true)
+                              options: options, prompt: prompt, paste: paste, allowsPin: true, speculative: speculative)
+                await speculative?.cancel()
             } catch {
+                await speculative?.cancel()
                 liveAudio.continuation.finish()
                 feeding?.cancel()
                 _ = await feeding?.result
@@ -657,7 +668,7 @@ public final class StudioSession {
         let run = RecordingRun(id: id, date: date, transcript: text, audioSeconds: statistics.duration,
             latency: latency, averageDB: statistics.rmsDBFS, peakDB: statistics.peakDBFS,
             input: input, savedURL: nil, engine: options.engine,
-            model: URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: prompt,
+            model: options.engine == "fast" ? "Parakeet Ultra · Whisper verification" : URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: prompt,
             samples: samples, outcome: outcome, rawTranscript: rawText, cleanupResult: cleanupResult)
         do { return try historyStore.save(run) }
         catch {
@@ -679,7 +690,7 @@ public final class StudioSession {
     private func complete(id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
                           latency: Double, input: String, options: StudioSettings, prompt: String,
                           paste: PreparedTranscriptPaste? = nil, allowsPin: Bool = false,
-                          replacing previous: RecordingRun? = nil) async throws {
+                          replacing previous: RecordingRun? = nil, speculative: SpeculativeCleanup? = nil) async throws {
         let started = ContinuousClock.now
         let original = text
         var text = text
@@ -694,9 +705,14 @@ public final class StudioSession {
                             outcome: .interrupted, rawText: original)
             }
             let memory = options.cleanupUseMemory ? debugging.cleanupLab.memory : CleanupMemory()
-            processing = try await cleanupService.run(.init(id: id, rawText: original,
-                language: options.language, memory: memory), engine: options.cleanupEngine,
-                timeout: options.cleanupTimeoutSeconds, source: previous == nil ? "Dictation cleanup" : "History retry cleanup")
+            var request = CleanupRequest(id: id, rawText: original, language: options.language, memory: memory)
+            request.prompts = debugging.promptStore.configuration
+            processing = try await speculative?.finish(matching: request)
+            if let processing { debugging.promptStore.record(processing) }
+            else {
+                processing = try await cleanupService.run(request, engine: options.cleanupEngine,
+                    timeout: options.cleanupTimeoutSeconds, source: previous == nil ? "Dictation cleanup" : "History retry cleanup")
+            }
             try check(id)
             text = processing?.text ?? original
             isCleaningUp = false
@@ -709,7 +725,7 @@ public final class StudioSession {
                 audioSeconds: previous.audioSeconds, latency: latency + Self.seconds(since: started),
                 averageDB: previous.averageDB, peakDB: previous.peakDB, input: previous.input,
                 savedURL: previous.savedURL, engine: options.engine,
-                model: URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: previous.prompt,
+                model: options.engine == "fast" ? "Parakeet Ultra · Whisper verification" : URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: previous.prompt,
                 samples: samples, outcome: .completed, rawTranscript: options.cleanupEnabled ? original : nil,
                 cleanupResult: processing)
             let stored = try historyStore.save(run)
@@ -802,6 +818,27 @@ public final class StudioSession {
         debugging.setModelEnabled(model.id, enabled: false)
     }
 
+    func deleteFastModel() async throws {
+        guard !busyForUpdate else { throw StudioError.message("Finish the current task before deleting a model.") }
+        let folder = FastTranscriptionEngine.modelDirectory
+        guard folder.resolvingSymlinksInPath() == folder.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(folder.lastPathComponent) else {
+            throw StudioError.message("Manage this linked model folder in Finder.")
+        }
+        modelMaintenance = true
+        defer { modelMaintenance = false; refreshModels() }
+        for old in retiredPreparations { await old.cancelAndWait() }
+        retiredPreparations.removeAll()
+        if settings.engine == "fast" {
+            await preparation?.cancelAndWait()
+            preparation = nil; preparationID = UUID(); engine = nil; engineKey = ""
+            modelLoaded = false; modelPreparing = false; modelPreparationError = nil
+            var updated = settings; updated.engine = "whisperkit"
+            try updated.save(project: project)
+            settings = updated
+        }
+        if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
+    }
+
     func deleteCleanupModel(_ model: QwenModel) async throws {
         guard !busyForUpdate else { throw StudioError.message("Finish the current task before deleting a model.") }
         modelMaintenance = true
@@ -814,7 +851,7 @@ public final class StudioSession {
             settings = updated
         }
         if model == .qwen06 { debugging.cleanupLab.compareQwen = false }
-        else { debugging.cleanupLab.compareQwen17 = false }
+        else if model == .qwen17 { debugging.cleanupLab.compareQwen17 = false }
         debugging.cleanupLab.savePreferences()
     }
     private static func seconds(since start: ContinuousClock.Instant) -> Double {
