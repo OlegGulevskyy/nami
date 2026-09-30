@@ -135,7 +135,7 @@ struct ModelsView: View {
             if session.settings.modelFolder.isEmpty {
                 Text("Choose a Whisper model below for verification first.").font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
             }
-        }.padding(18).background(.white, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(18).background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
     }
 
@@ -153,7 +153,7 @@ struct ModelsView: View {
                 HStack { whisperSize(model); Spacer(); whisperActions(model, selected: selected) }
                 VStack(alignment: .leading, spacing: 12) { whisperSize(model); whisperActions(model, selected: selected) }
             }
-        }.padding(18).background(.white, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(18).background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
     }
     private func whisperSize(_ model: TranscriptionModel) -> some View {
@@ -230,7 +230,7 @@ struct ModelsView: View {
                     Button("Delete…", role: .destructive) { deletion = .qwen(model) }.disabled(locked)
                 }
             }.font(.system(size: 12))
-        }.padding(18).background(.white, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(18).background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
     }
 

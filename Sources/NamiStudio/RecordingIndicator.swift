@@ -113,39 +113,39 @@ public struct RecordingIndicatorView: View {
     public var body: some View {
         HStack(spacing: 12) {
             if let notice {
-                Image(systemName: "pin").foregroundStyle(StudioStyle.selection)
+                Image(systemName: "pin").foregroundStyle(StudioStyle.Indicator.accent)
                 Text(notice).font(.system(size: 12, weight: .medium)).lineLimit(2).minimumScaleFactor(0.85)
                 Spacer(minLength: 0)
             } else if !phase.busy, let destination {
-                Image(systemName: "pin.fill").foregroundStyle(StudioStyle.selection)
+                Image(systemName: "pin.fill").foregroundStyle(StudioStyle.Indicator.accent)
                 Text("Next transcript → \(destination)").font(.system(size: 13, weight: .medium)).lineLimit(1)
                 Spacer(minLength: 0)
             } else if phase == .recording {
-                Circle().fill(StudioStyle.selection).frame(width: 6, height: 6)
+                Circle().fill(StudioStyle.Indicator.accent).frame(width: 6, height: 6)
                 if let destination {
                     Label(destination, systemImage: "pin.fill").font(.system(size: 13, weight: .medium))
                         .lineLimit(1).truncationMode(.tail)
                 } else {
                     Text("Listening").font(.system(size: 13, weight: .medium))
                 }
-                StudioWaveform(levels: levels, color: StudioStyle.selection)
+                StudioWaveform(levels: levels, color: StudioStyle.Indicator.accent)
                     .frame(width: 66, height: 26).accessibilityHidden(true)
                 Spacer(minLength: 0)
                 Text(String(format: "%02d:%02d", Int(elapsed) / 60, Int(elapsed) % 60))
                     .font(.system(size: 12, design: .monospaced)).monospacedDigit()
-                    .foregroundStyle(StudioStyle.selection)
+                    .foregroundStyle(StudioStyle.Indicator.accent)
             } else {
                 ProgressView().controlSize(.small).colorScheme(.dark)
                 Text(status).font(.system(size: 13, weight: .medium))
                 Spacer(minLength: 0)
-                Image(systemName: "waveform").foregroundStyle(StudioStyle.selection)
+                Image(systemName: "waveform").foregroundStyle(StudioStyle.Indicator.accent)
             }
         }
-        .foregroundStyle(StudioStyle.paper)
+        .foregroundStyle(StudioStyle.Indicator.foreground)
         .padding(.horizontal, 18)
         .frame(width: 256, height: 52)
-        .background(StudioStyle.ink, in: Capsule())
-        .overlay(Capsule().strokeBorder(StudioStyle.selection.opacity(0.25)))
+        .background(StudioStyle.Indicator.background, in: Capsule())
+        .overlay(Capsule().strokeBorder(StudioStyle.Indicator.accent.opacity(0.25)))
         .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
         .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         .preferredColorScheme(.dark)

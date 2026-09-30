@@ -122,7 +122,7 @@ struct CleanupLabView: View {
                 TextEditor(text: $lab.input).font(.system(size: 16)).scrollContentBackground(.hidden)
                     .padding(8).frame(minHeight: 145).disabled(locked).accessibilityLabel("Transcript to clean up")
             }
-            .background(.white, in: RoundedRectangle(cornerRadius: 10))
+            .background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 20) { comparisonOptions; Spacer(); compareButton }
@@ -205,14 +205,14 @@ struct CleanupLabView: View {
                     Button("Correct this result") { lab.editCorrection(for: result) }.font(.system(size: 12)).disabled(locked)
                 }
             }
-        }.padding(20).background(.white, in: RoundedRectangle(cornerRadius: 10))
+        }.padding(20).background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
     }
     private var correctionEditor: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Your correction").font(.system(size: 17, weight: .semibold))
             TextEditor(text: $lab.correctedText).font(.system(size: 16)).frame(height: 120)
-                .padding(8).background(.white).disabled(locked).accessibilityLabel("Corrected transcript to remember")
+                .padding(8).background(StudioStyle.surface).disabled(locked).accessibilityLabel("Corrected transcript to remember")
             HStack {
                 Button("Remember correction") { lab.teachCorrection() }.studioProminentButton().disabled(!lab.canTeach || locked)
                     .help("Save a personal example for future cleanup. This does not create a global word replacement.")

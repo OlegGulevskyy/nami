@@ -8,9 +8,9 @@ struct RecordingHistoryNotice {
     let symbol: String
     let needsAttention: Bool
 
-    static let ink = Color(red: 0.49, green: 0.25, blue: 0.12)
-    static let background = Color(red: 0.985, green: 0.948, blue: 0.905)
-    static let border = Color(red: 0.86, green: 0.72, blue: 0.58)
+    static let ink = Color(light: (0.49, 0.25, 0.12), dark: (0.945, 0.753, 0.608))
+    static let background = Color(light: (0.985, 0.948, 0.905), dark: (0.196, 0.145, 0.106))
+    static let border = Color(light: (0.86, 0.72, 0.58), dark: (0.478, 0.337, 0.231))
 }
 
 extension RecordingRun {

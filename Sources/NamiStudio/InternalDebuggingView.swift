@@ -207,7 +207,7 @@ struct InternalDebuggingView: View {
         for range in ranges {
             guard let start = AttributedString.Index(range.lowerBound, within: output),
                   let end = AttributedString.Index(range.upperBound, within: output) else { continue }
-            output[start..<end].backgroundColor = Color(red: 0.96, green: 0.87, blue: 0.60)
+            output[start..<end].backgroundColor = Color(light: (0.96, 0.87, 0.60), dark: (0.431, 0.353, 0.141))
             output[start..<end].underlineStyle = .single
         }
         return output

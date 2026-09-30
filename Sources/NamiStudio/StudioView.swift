@@ -64,7 +64,8 @@ public struct StudioView: View {
         GeometryReader { geometry in
             studio(availableWidth: geometry.size.width)
         }
-        .frame(minWidth: 760, minHeight: 600).preferredColorScheme(.light)
+        .frame(minWidth: 760, minHeight: 600)
+        .onChange(of: session.settings.appearance, initial: true) { NSApp.appearance = session.settings.appearance.nsAppearance }
         .background(StudioWindowChrome()).ignoresSafeArea(.container, edges: .top)
     }
 
@@ -413,7 +414,7 @@ public struct StudioView: View {
                     }
                 }
                 .frame(width: 36, height: 36)
-                .studioGlass(in: Circle(), tint: StudioStyle.green, interactive: true)
+                .studioGlass(in: Circle(), tint: StudioStyle.greenFill, interactive: true)
                 .contentShape(Circle())
             }
             .buttonStyle(.plain).disabled(session.phase.busy && session.phase != .recording)

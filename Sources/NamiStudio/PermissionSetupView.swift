@@ -34,7 +34,7 @@ struct PermissionSetupView: View {
                     }
                 }
             }
-            .studioProminentButton().tint(StudioStyle.green).controlSize(.regular)
+            .studioProminentButton().controlSize(.regular)
             .disabled(permissions.requestingMicrophone)
 
             Text("In System Settings → Privacy & Security, enable Nami. If it’s already enabled but access is still missing, switch it off and on, then quit and reopen Nami. Follow any restart prompt from macOS.")
@@ -59,7 +59,6 @@ struct PermissionSetupView: View {
         .setupCard()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Permissions required")
-        .environment(\.colorScheme, .light)
     }
 
     private var microphoneDetail: String {
@@ -101,7 +100,7 @@ private extension View {
             background(StudioStyle.paper.opacity(0.96), in: RoundedRectangle(cornerRadius: 22))
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
                 .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(StudioStyle.line))
-                .shadow(color: StudioStyle.ink.opacity(0.14), radius: 30, y: 12)
+                .shadow(color: .black.opacity(0.14), radius: 30, y: 12)
         }
     }
 }

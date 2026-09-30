@@ -155,7 +155,7 @@ struct PromptsView: View {
                 if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(StudioStyle.green) }
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(selected ? StudioStyle.soft : Color.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+            .background(selected ? StudioStyle.soft : StudioStyle.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected ? StudioStyle.green.opacity(0.5) : StudioStyle.line))
             .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityAddTraits(selected ? [.isSelected] : [])
@@ -409,7 +409,7 @@ struct PromptsView: View {
             Spacer(minLength: 8)
             Button("Discard") { discard() }.disabled(!dirty)
             Button(destination.isCleanup ? "Save cleanup settings" : "Save vocabulary") { save() }
-                .studioProminentButton().tint(StudioStyle.green).disabled(!dirty || store.loadFailed)
+                .studioProminentButton().disabled(!dirty || store.loadFailed)
         }.padding(.top, 2)
     }
 
@@ -602,7 +602,7 @@ struct PromptsView: View {
                 content().padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(tinted ? StudioStyle.soft.opacity(0.35) : Color.white.opacity(0.75))
+        .background(tinted ? StudioStyle.soft.opacity(0.35) : StudioStyle.surface.opacity(0.75))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
     }
@@ -624,7 +624,7 @@ struct PromptsView: View {
     private func textEditor(_ label: String, text: Binding<String>, height: CGFloat) -> some View {
         TextEditor(text: text).font(.system(size: 12, design: .monospaced)).lineSpacing(3)
             .scrollContentBackground(.hidden).padding(10).frame(height: height)
-            .background(.white, in: RoundedRectangle(cornerRadius: 6))
+            .background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(StudioStyle.line))
             .accessibilityLabel(label)
     }
@@ -638,7 +638,7 @@ struct PromptsView: View {
             Text(content.isEmpty ? "(empty)" : content).font(.system(size: 12, design: .monospaced))
                 .lineSpacing(4).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        }.padding(14).background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 6))
+        }.padding(14).background(StudioStyle.surface.opacity(0.85), in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(StudioStyle.line.opacity(0.7)))
     }
 
@@ -647,7 +647,7 @@ struct PromptsView: View {
             Text(title).font(.system(size: 12, weight: selected ? .semibold : .regular))
                 .foregroundStyle(selected ? StudioStyle.ink : StudioStyle.quiet)
                 .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(selected ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                .background(selected ? StudioStyle.surface : Color.clear, in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityAddTraits(selected ? [.isSelected] : [])
     }

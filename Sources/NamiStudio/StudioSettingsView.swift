@@ -163,6 +163,23 @@ public struct StudioSettingsView: View {
             }
         }.disabled(session.phase.busy)
         section("Appearance") {
+            row("Theme") {
+                Menu {
+                    ForEach(StudioAppearance.allCases, id: \.self) { appearance in
+                        Button {
+                            session.settings.appearance = appearance
+                        } label: {
+                            if session.settings.appearance == appearance {
+                                Label(appearance.title, systemImage: "checkmark")
+                            } else {
+                                Text(appearance.title)
+                            }
+                        }
+                    }
+                } label: { Text(session.settings.appearance.title) }
+                    .preferenceMenu()
+                    .accessibilityLabel("Theme: \(session.settings.appearance.title)")
+            }
             row("Transcript font", subtitle: "Used for your transcription history.") {
                 Menu {
                     ForEach(TranscriptFont.allCases, id: \.self) { typeface in
@@ -468,7 +485,7 @@ private extension View {
             control.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 7))
         } else {
             control
-                .background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 7))
+                .background(StudioStyle.surface.opacity(0.8), in: RoundedRectangle(cornerRadius: 7))
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StudioStyle.line))
         }
     }

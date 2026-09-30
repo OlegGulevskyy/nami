@@ -7,6 +7,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var language = "en"
     public var vocabulary = ""
     public var transcriptFont: TranscriptFont = .sourceSans
+    public var appearance: StudioAppearance = .system
     public var saveAudio = false
     public var copyWhenFinished = true
     public var pasteWhenFinished = true
@@ -20,7 +21,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case engine, modelFolder, language, vocabulary, transcriptFont, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
+        case engine, modelFolder, language, vocabulary, transcriptFont, appearance, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
         case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory
     }
 
@@ -32,6 +33,8 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         vocabulary = try values.decodeIfPresent(String.self, forKey: .vocabulary) ?? ""
         transcriptFont = (try values.decodeIfPresent(String.self, forKey: .transcriptFont))
             .flatMap(TranscriptFont.init(rawValue:)) ?? .sourceSans
+        appearance = (try values.decodeIfPresent(String.self, forKey: .appearance))
+            .flatMap(StudioAppearance.init(rawValue:)) ?? .system
         saveAudio = try values.decodeIfPresent(Bool.self, forKey: .saveAudio) ?? false
         copyWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .copyWhenFinished) ?? true
         pasteWhenFinished = try values.decodeIfPresent(Bool.self, forKey: .pasteWhenFinished) ?? true
@@ -86,6 +89,10 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         let directory = URL(fileURLWithPath: project.path, isDirectory: true)
         return URL(fileURLWithPath: (path as NSString).expandingTildeInPath, relativeTo: directory).standardizedFileURL.path
     }
+}
+
+public enum StudioAppearance: String, Codable, CaseIterable, Sendable {
+    case system, light, dark
 }
 
 public enum StudioError: Error, LocalizedError {
