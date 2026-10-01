@@ -11,8 +11,9 @@ private struct RespondingProcessor: TextProcessor {
     func process(_ request: CleanupRequest) async throws -> String {
         let record = ModelPromptRecord(requestID: request.id, provider: identifier, messages: [.init(role: "user", content: request.rawText)])
         await request.promptObserver?(record)
-        // Ignore cancellation, like an SDK that finishes after the deadline.
-        if delay > .zero { try? await Task.sleep(for: delay) }
+        // Ignore cancellation, like an SDK that finishes after the deadline. An unstructured
+        // task keeps the timeout's cancellation from cutting the delay short.
+        if delay > .zero { await Task { try? await Task.sleep(for: delay) }.value }
         await request.promptObserver?(record.responding(.init(output: output, seconds: 0.25, inputTokens: 40, outputTokens: 5,
             promptSeconds: 0.05, generationSeconds: 0.2)))
         return output
