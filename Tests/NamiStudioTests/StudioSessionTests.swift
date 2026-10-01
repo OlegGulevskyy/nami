@@ -203,11 +203,12 @@ import NamiAudio
 
         capture.startError = nil
         session.chooseMicrophone("studio")
-        try await waitUntil { session.phase == .recording && panel.frame.size == RecordingIndicatorView.windowSize }
+        // Preparing already uses the recording size, so also wait for the recording phase to apply.
+        try await waitUntil { session.phase == .recording && panel.frame.size == RecordingIndicatorView.windowSize && !panel.ignoresMouseEvents }
         #expect(requested == ["unplugged-usb", "studio"])
         #expect(try StudioSettings.load(project: project).microphoneUID == "studio")
         #expect(session.microphoneIssue == nil)
-        #expect(panel.isVisible && !panel.ignoresMouseEvents)
+        #expect(panel.isVisible)
         capture.emit(seconds: 1)
         try await waitUntil { session.capturedSeconds == 1 }
         session.stopRecording()
