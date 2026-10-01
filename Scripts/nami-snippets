@@ -1,0 +1,10 @@
+#!/bin/sh
+# Runs the nami-snippets CLI, building it first when it is missing or out of date.
+# Safe to symlink onto your PATH.
+set -e
+root="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+bin="$root/.build/release/nami-snippets"
+if [ ! -x "$bin" ] || [ -n "$(find "$root/Sources/NamiCore" "$root/Sources/NamiSnippets" -name '*.swift' -newer "$bin" | head -1)" ]; then
+    swift build -c release --package-path "$root" --product nami-snippets >&2
+fi
+exec "$bin" "$@"

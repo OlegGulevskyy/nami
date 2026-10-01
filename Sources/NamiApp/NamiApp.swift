@@ -1,4 +1,5 @@
 import AppKit
+import NamiAudio
 import NamiStudio
 import SwiftUI
 
@@ -40,6 +41,7 @@ struct NamiApp: App {
                                     destinationPinner: StudioSession.systemDestinationPinner,
                                     captureBuilder: StudioSession.systemCapture,
                                     inputVolumeControl: snapshot ? InputVolumeControl(read: { _ in 0.6 }, write: { _, _ in }) : .system,
+                                    actionRunner: { step in if !snapshot { try await StudioSession.systemActionRunner(step) } },
                                     clipboardWriter: { snapshot || StudioSession.systemClipboardWriter($0) })
         _session = State(initialValue: session)
         session.updates = AppUpdates(disabled: args.contains("--snapshot"), isBusy: { [weak session] in
@@ -116,6 +118,12 @@ struct NamiApp: App {
                                size: RecordingIndicatorView.windowSize,
                                to: output.appendingPathComponent("indicator-\(phase.rawValue).png"))
             }
+            let microphones = [AudioInputDevice(id: "built-in", name: "MacBook Pro Microphone"),
+                               AudioInputDevice(id: "usb", name: "USB Audio Interface")]
+            try renderView(AnyView(RecordingIndicatorView(phase: .choosingMicrophone, microphones: microphones,
+                                                          offersSystemDefault: true, microphoneIssue: "Your microphone isn’t connected.")),
+                           size: RecordingIndicatorView.size(phase: .choosingMicrophone, microphoneChoices: 3),
+                           to: output.appendingPathComponent("indicator-choosing-microphone.png"))
             try render(to: output.appendingPathComponent("local-model.png"), settingsPage: .model)
             try render(to: output.appendingPathComponent("about.png"), settingsPage: .about)
             try render(to: output.appendingPathComponent("settings.png"), settingsPage: .general)

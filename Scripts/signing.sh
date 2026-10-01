@@ -44,9 +44,13 @@ nami_sign_app() {
     signing_options+=(--timestamp)
   fi
   # Sign embedded code from the inside out. Do not use --deep to sign.
+  local nested
+  # Command-line tools for agent skills (bare executables, so not matched below).
+  for nested in "$app_dir"/Contents/Helpers/*(N); do
+    codesign "${signing_options[@]}" --identifier "local.nami.${nested:t}" "$nested"
+  done
   # Sparkle contains a bare Autoupdate tool, XPC services, and Updater.app.
   # Its executable and nested bundles must be signed before the framework.
-  local nested
   while IFS= read -r -d '' nested; do
     codesign "${signing_options[@]}" "$nested"
   done < <(find "$app_dir/Contents" -depth \( -name 'Autoupdate' -o -name '*.app' -o -name '*.dylib' -o -name '*.framework' -o -name '*.bundle' -o -name '*.xpc' \) ! -type l -print0)

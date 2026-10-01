@@ -18,10 +18,12 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var audioDirectory = ""
     /// nil follows the system default; a UID pins Nami to a specific microphone.
     public var microphoneUID: String?
+    /// Where agent skills are installed; empty means Claude Code's `~/.claude/skills`.
+    public var skillsFolder = ""
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case engine, modelFolder, language, vocabulary, transcriptFont, appearance, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID
+        case engine, modelFolder, language, vocabulary, transcriptFont, appearance, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID, skillsFolder
         case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory
     }
 
@@ -45,6 +47,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         cleanupUseMemory = try values.decodeIfPresent(Bool.self, forKey: .cleanupUseMemory) ?? true
         audioDirectory = try values.decodeIfPresent(String.self, forKey: .audioDirectory) ?? ""
         microphoneUID = try values.decodeIfPresent(String.self, forKey: .microphoneUID)
+        skillsFolder = try values.decodeIfPresent(String.self, forKey: .skillsFolder) ?? ""
     }
 
     public static func load(project: URL) throws -> Self {

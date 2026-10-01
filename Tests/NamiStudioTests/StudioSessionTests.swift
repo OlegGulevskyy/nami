@@ -21,16 +21,22 @@ import NamiAudio
     var starts = 0
     var stops = 0
     var startDelay: Duration = .zero
+    var startError: Error?
     var continuation: AsyncThrowingStream<AudioChunk, Error>.Continuation?
     func start() async throws -> AsyncThrowingStream<AudioChunk, Error> {
         starts += 1
         try await Task.sleep(for: startDelay)
+        if let startError { throw startError }
         let pair = AsyncThrowingStream<AudioChunk, Error>.makeStream(bufferingPolicy: .bufferingOldest(128))
         continuation = pair.continuation
         return pair.stream
     }
     func emit(seconds: Double) {
         continuation?.yield(AudioChunk(samples: Array(repeating: 0.1, count: Int(seconds * 16000)), timestamp: 0))
+    }
+    /// What a Bluetooth headset sends while it switches to its microphone.
+    func emitSilence(seconds: Double) {
+        continuation?.yield(AudioChunk(samples: Array(repeating: 0, count: Int(seconds * 16000)), timestamp: 0))
     }
     func stop() { stops += 1; continuation?.finish(); continuation = nil }
 }
@@ -167,6 +173,92 @@ import NamiAudio
         try await waitUntil { session.phase == .failed && indicator.panel?.isVisible == false }
     }
 
+    @Test func unavailableMicrophoneAsksForAnotherAndThenRecords() async throws {
+        _ = NSApplication.shared
+        let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+        let engine = TestEngine(), capture = TestCapture(), devices = TestInputDevices()
+        devices.available = [AudioInputDevice(id: "built-in", name: "MacBook Pro Microphone")]
+        var requested: [String?] = []
+        let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine },
+            captureBuilder: { uid in requested.append(uid); return capture }, inputDevicesProvider: { devices.available },
+            clipboardWriter: { _ in true })
+        let indicator = RecordingIndicatorController(session: session)
+        defer { indicator.panel?.orderOut(nil) }
+        session.settings.microphoneUID = "unplugged-usb"
+        capture.startError = AudioInputError.deviceUnavailable
+        session.startRecording()
+        try await waitUntil { session.phase == .choosingMicrophone && indicator.panel?.isVisible == true }
+        let panel = try #require(indicator.panel)
+        #expect(session.microphoneIssue == "Your microphone isn’t connected.")
+        #expect(session.errorMessage == nil && session.runs.isEmpty)
+        #expect(session.offersSystemDefaultMicrophone)
+        // The controller applies each phase on the next main-actor turn.
+        try await waitUntil { panel.frame.size == RecordingIndicatorView.size(phase: .choosingMicrophone, microphoneChoices: 2) }
+        #expect(!panel.ignoresMouseEvents && !panel.canBecomeKey)
+
+        // A microphone plugged in while choosing shows up without reopening.
+        devices.available.append(AudioInputDevice(id: "studio", name: "Studio Mic"))
+        try await waitUntil { session.inputDevices.count == 2 }
+        try await waitUntil { panel.frame.size == RecordingIndicatorView.size(phase: .choosingMicrophone, microphoneChoices: 3) }
+
+        capture.startError = nil
+        session.chooseMicrophone("studio")
+        try await waitUntil { session.phase == .recording && panel.frame.size == RecordingIndicatorView.windowSize }
+        #expect(requested == ["unplugged-usb", "studio"])
+        #expect(try StudioSettings.load(project: project).microphoneUID == "studio")
+        #expect(session.microphoneIssue == nil)
+        #expect(panel.isVisible && !panel.ignoresMouseEvents)
+        capture.emit(seconds: 1)
+        try await waitUntil { session.capturedSeconds == 1 }
+        session.stopRecording()
+        try await waitUntil { session.phase == .idle && !panel.isVisible }
+        #expect(session.selectedRun?.transcript == engine.transcript)
+    }
+
+    @Test func closingTheMicrophoneChoiceCancelsTheRecording() async throws {
+        _ = NSApplication.shared
+        let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+        let engine = TestEngine(), capture = TestCapture()
+        let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine },
+            captureBuilder: { _ in capture }, inputDevicesProvider: { [] }, clipboardWriter: { _ in true })
+        let indicator = RecordingIndicatorController(session: session)
+        defer { indicator.panel?.orderOut(nil) }
+        capture.startError = AudioInputError.invalidFormat
+        session.startRecording()
+        try await waitUntil { session.phase == .choosingMicrophone && indicator.panel?.isVisible == true }
+        #expect(session.microphoneIssue == "Your microphone couldn’t start.")
+        #expect(!session.offersSystemDefaultMicrophone)
+        session.cancel()
+        try await waitUntil { session.phase == .idle && indicator.panel?.isVisible == false }
+        #expect(session.microphoneIssue == nil && session.runs.isEmpty)
+        #expect(capture.starts == 1)
+        // A late choice after closing does nothing.
+        session.chooseMicrophone(nil)
+        #expect(session.phase == .idle && capture.starts == 1)
+    }
+
+    @Test func onlyRecordingAndChoosingTakeClicks() async throws {
+        _ = NSApplication.shared
+        let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+        let engine = TestEngine(), capture = TestCapture()
+        engine.releaseFinish = false
+        defer { engine.releaseFinish = true }
+        let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine },
+            captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+        let indicator = RecordingIndicatorController(session: session)
+        defer { indicator.panel?.orderOut(nil) }
+        session.startRecording()
+        try await waitUntil { session.phase == .recording && indicator.panel?.ignoresMouseEvents == false }
+        #expect(session.phase.cancellableFromIndicator)
+        capture.emit(seconds: 1)
+        try await waitUntil { session.capturedSeconds == 1 }
+        session.stopRecording()
+        try await waitUntil { engine.waitingForFinish && indicator.panel?.ignoresMouseEvents == true }
+        #expect(!session.phase.cancellableFromIndicator)
+        engine.releaseFinish = true
+        try await waitUntil { session.phase == .idle }
+    }
+
     @Test func centersAboveDockOnDisplaysWithNegativeCoordinates() {
         let visible = NSRect(x: -1920, y: -500, width: 1920, height: 1000)
         let origin = RecordingIndicatorController.origin(in: visible)
@@ -246,6 +338,10 @@ private func projectDirectory() throws -> URL {
     #expect(run.rawTranscript == engine.transcript)
     #expect(run.cleanupResult?.outcome == .cleaned)
     #expect(run.cleanupResult?.provider == processor.identifier)
+    // Recognition time is kept apart from cleanup, which waited on the processor.
+    let transcription = try #require(run.transcriptionSeconds)
+    #expect(transcription >= 0 && transcription < run.latency)
+    #expect(try RecordingHistoryStore(directory: session.historyDirectory).load().runs.first?.transcriptionSeconds == transcription)
     #expect(try RecordingHistoryStore(directory: session.historyDirectory).load().runs.first?.rawTranscript == engine.transcript)
     let settings = try StudioSettings.load(project: project)
     #expect(settings.cleanupEnabled && settings.cleanupEngine == .qwen && settings.cleanupTimeoutSeconds == 5)
@@ -272,8 +368,10 @@ private func projectDirectory() throws -> URL {
     let run = try #require(session.runs.first)
     var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(run)) as? [String: Any])
     legacy.removeValue(forKey: "rawTranscript"); legacy.removeValue(forKey: "cleanupResult")
+    legacy.removeValue(forKey: "transcriptionSeconds")
     let restored = try JSONDecoder().decode(RecordingRun.self, from: JSONSerialization.data(withJSONObject: legacy))
     #expect(restored.transcript == engine.transcript && restored.cleanupResult == nil && restored.rawTranscript == nil)
+    #expect(run.transcriptionSeconds != nil && restored.transcriptionSeconds == nil)
 }
 
 @Test @MainActor func liveCleanupInvalidJSONAndTimeoutPasteOriginalOnlyOnce() async throws {
@@ -519,7 +617,52 @@ private func projectDirectory() throws -> URL {
     #expect(try AudioFile.read(#require(files.first)).count == 80_000)
 }
 
-@Test @MainActor func silentMicrophoneReportsMissingAudio() async throws {
+@Test @MainActor func listeningStartsWithTheFirstRealSound() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+    session.startRecording()
+    try await waitUntil { session.phase == .recording && capture.continuation != nil }
+    #expect(session.awaitingMicrophone)
+    #expect(session.status == "Waiting for the microphone…")
+    capture.emitSilence(seconds: 1.5)
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(session.awaitingMicrophone && session.capturedSeconds == 0 && session.elapsed == 0)
+    #expect(session.firstAudioSeconds == nil)
+    // Zeros leading into the first sound are dropped too.
+    capture.continuation?.yield(AudioChunk(samples: Array(repeating: 0, count: 800) + Array(repeating: 0.1, count: 800), timestamp: 0))
+    try await waitUntil { !session.awaitingMicrophone }
+    #expect(session.status == "Listening. Speak naturally.")
+    #expect(session.firstAudioSeconds != nil)
+    try await waitUntil { session.elapsed > 0 }
+    // Later silence is part of the take.
+    capture.emitSilence(seconds: 1)
+    capture.emit(seconds: 1)
+    try await waitUntil { session.capturedSeconds == 2.05 }
+    session.stopRecording()
+    try await waitUntil { session.phase == .idle }
+    #expect(engine.sampleCount == 32_800)
+    #expect(session.selectedRun?.audioSeconds == 2.05)
+}
+
+@Test @MainActor func microphoneThatStaysSilentAsksForAnother() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, inputDevicesProvider: { [AudioInputDevice(id: "airpods", name: "AirPods")] }, clipboardWriter: { _ in true })
+    session.microphoneWarmupTimeout = .milliseconds(200)
+    session.startRecording()
+    try await waitUntil { session.phase == .recording && capture.continuation != nil }
+    capture.emitSilence(seconds: 3)
+    try await waitUntil { session.phase == .choosingMicrophone }
+    #expect(capture.stops >= 1)
+    #expect(session.microphoneIssue == "No sound came from your microphone.")
+    #expect(session.runs.isEmpty && session.errorMessage == nil)
+    #expect(!session.awaitingMicrophone)
+    session.cancel()
+    #expect(session.phase == .idle)
+}
+
+@Test @MainActor func silentMicrophoneAsksForAnotherMicrophone() async throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let engine = TestEngine(), capture = TestCapture()
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
@@ -527,11 +670,13 @@ private func projectDirectory() throws -> URL {
     session.startRecording()
     try await waitUntil { session.phase == .recording }
     session.stopRecording()
-    try await waitUntil { !session.phase.busy }
-    #expect(session.phase == .failed)
-    #expect(session.errorMessage == AudioInputError.noAudioReceived.localizedDescription)
+    try await waitUntil { session.phase == .choosingMicrophone }
+    #expect(session.microphoneIssue == "No sound came from your microphone.")
+    #expect(session.errorMessage == nil)
     #expect(session.runs.isEmpty)
     #expect(!FileManager.default.fileExists(atPath: project.appendingPathComponent("evaluation/audio").path))
+    session.cancel()
+    #expect(session.phase == .idle && session.microphoneIssue == nil)
 }
 
 @Test func settingsPreserveOtherProjectKeysAndResolveHome() throws {
@@ -1494,6 +1639,7 @@ private func projectDirectory() throws -> URL {
     #expect(session.runs.map(\.id) == [newer.id, original.id])
     #expect(updated.transcript == processor.output && updated.rawTranscript == engine.transcript)
     #expect(updated.outcome == .completed && updated.cleanupResult?.succeeded == true)
+    #expect(updated.transcriptionSeconds != nil)
     #expect(updated.date == original.date && updated.input == original.input && updated.prompt == original.prompt)
     #expect(updated.audioSeconds == original.audioSeconds && updated.averageDB == original.averageDB)
     #expect(updated.model == "current-model" && updated.engine == "fake")
@@ -1541,4 +1687,146 @@ private func projectDirectory() throws -> URL {
     #expect(session.runs.first?.outcome == .completed)
     #expect(try Data(contentsOf: metadata) == before)
     if mode == "failure" || mode == "missing-audio" { #expect(session.errorMessage != nil) }
+}
+
+@Test @MainActor func snippetReplacesDictationSkipsCleanupAndKeepsWhatWasSaid() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
+    var copies: [String] = [], pasted: [String] = []
+    func makeSession() -> StudioSession {
+        StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+            permissions: allowedPermissions(), pastePreparer: { { text, _ in pasted.append(text); return .sent } },
+            engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
+            clipboardWriter: { copies.append($0); return true })
+    }
+    let session = makeSession()
+    session.settings.cleanupEngine = .qwen
+    session.settings.cleanupEnabled = true
+    session.snippets.snippets = [Snippet(phrases: "Free environment, free env",
+                                         template: "Hey @gptqa, is there a free environment to deploy {{apps}}")]
+    func record(_ transcript: String) async throws {
+        engine.transcript = transcript
+        session.startRecording()
+        try await waitUntil { session.phase == .recording }
+        capture.emit(seconds: 0.1)
+        try await waitUntil { session.capturedSeconds >= 0.1 }
+        session.stopRecording()
+        try await waitUntil { !session.phase.busy }
+    }
+
+    try await record("Free env snippet for Excel add-in and Users API.")
+    let expanded = "Hey @gptqa, is there a free environment to deploy Excel add-in, Users API"
+    #expect(pasted == [expanded] && copies == [expanded])
+    #expect(processor.requests.isEmpty)
+    #expect(session.status.hasSuffix("Used snippet “Free environment”."))
+    let run = try #require(try RecordingHistoryStore(directory: session.historyDirectory).load().runs.first)
+    #expect(run.transcript == expanded && run.rawTranscript == engine.transcript)
+    #expect(run.snippetName == "Free environment" && run.cleanupResult == nil)
+
+    // The trigger alone never drops what was said.
+    try await record("Snippet for the standup.")
+    #expect(pasted.last == processor.output)
+    #expect(session.status.hasSuffix("No snippet matched, so your words were kept as said."))
+    #expect(session.runs.first?.snippetName == nil)
+
+    // Snippets persist outside nami.json, and a damaged file is never overwritten.
+    #expect(makeSession().snippets == session.snippets)
+    let url = session.historyDirectory.appendingPathComponent("Snippets/snippets.json")
+    try Data("not json".utf8).write(to: url)
+    let damaged = makeSession()
+    #expect(damaged.snippetsLoadFailed && damaged.snippets.snippets.isEmpty)
+    damaged.snippets.triggerWord = "shortcut"
+    #expect(try String(contentsOf: url, encoding: .utf8) == "not json")
+}
+
+@Test @MainActor func snippetsChangedOutsideTheAppAreUsedWithoutBeingOverwritten() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    var pasted: [String] = []
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { text, _ in pasted.append(text); return .sent } },
+        engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
+    session.snippets.triggerWord = "shortcut"
+    let store = SnippetStore(url: session.historyDirectory.appendingPathComponent("Snippets/snippets.json"))
+    // What the CLI does: a locked read-modify-write of the shared file.
+    _ = try SnippetCommandLine.run(["add", "--phrases", "my email", "--text", "me@example.com"], store: store)
+    #expect(session.snippets.snippets.isEmpty)
+
+    // A recording picks up the change even before the window refreshes.
+    engine.transcript = "My email shortcut."
+    session.startRecording()
+    try await waitUntil { session.phase == .recording }
+    capture.emit(seconds: 0.1)
+    try await waitUntil { session.capturedSeconds >= 0.1 }
+    session.stopRecording()
+    try await waitUntil { !session.phase.busy }
+    #expect(pasted == ["me@example.com"])
+    #expect(session.snippets.triggerWord == "shortcut" && session.snippets.snippets.count == 1)
+
+    // Reloading does not write the file back, and later app edits keep the CLI's snippet.
+    let modified = store.modificationDate()
+    session.refreshSnippetsIfChanged()
+    #expect(store.modificationDate() == modified)
+    session.snippets.snippets.append(Snippet(phrases: "sign off", template: "Thanks"))
+    #expect(try store.load().snippets.map(\.title) == ["my email", "sign off"])
+}
+
+@Test @MainActor func actionRunsInsteadOfPastingAndOrdinaryDictationStillPastes() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture(), processor = TestCleanupProcessor()
+    var copies: [String] = [], pasted: [String] = [], ran: [ActionStep] = []
+    var failure: String?
+    func makeSession() -> StudioSession {
+        StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+            permissions: allowedPermissions(), pastePreparer: { { text, _ in pasted.append(text); return .sent } },
+            engineBuilder: { _ in engine }, cleanupProcessors: [.qwen: processor], captureBuilder: { _ in capture },
+            actionRunner: { step in
+                if let failure { throw StudioError.message(failure) }
+                ran.append(step)
+            },
+            clipboardWriter: { copies.append($0); return true })
+    }
+    let session = makeSession()
+    session.settings.cleanupEngine = .qwen
+    session.settings.cleanupEnabled = true
+    let open = ActionStep(kind: .openURL, target: "https://github.com/acme/excel-addin", application: "Google Chrome")
+    let notify = ActionStep(kind: .runShortcut, target: "Notify me")
+    session.actions.actions = [VoiceAction(phrases: "Open Excel repository, open Excel repo", steps: [open, notify])]
+    func record(_ transcript: String) async throws {
+        engine.transcript = transcript
+        session.startRecording()
+        try await waitUntil { session.phase == .recording }
+        capture.emit(seconds: 0.1)
+        try await waitUntil { session.capturedSeconds >= 0.1 }
+        session.stopRecording()
+        try await waitUntil { !session.phase.busy }
+    }
+
+    try await record("Open Excel repo.")
+    #expect(ran == [open, notify])
+    #expect(pasted.isEmpty && copies.isEmpty && processor.requests.isEmpty)
+    #expect(session.status == "Ran action “Open Excel repository”.")
+    let run = try #require(try RecordingHistoryStore(directory: session.historyDirectory).load().runs.first)
+    #expect(run.transcript == "Open Excel repo." && run.actionName == "Open Excel repository")
+
+    // Dictation that only starts the same way is pasted as usual.
+    try await record("Open Excel repo and look at the failing tests.")
+    #expect(ran.count == 2 && pasted == [processor.output])
+    #expect(session.runs.first?.actionName == nil)
+
+    // A failing step stops the rest and says why.
+    failure = "Unable to find application named 'Google Chrome'"
+    try await record("open excel repository")
+    #expect(ran.count == 2 && pasted.count == 1)
+    #expect(session.status == "Action “Open Excel repository” failed.")
+    #expect(session.errorMessage?.contains("Google Chrome") == true)
+
+    // Actions persist outside nami.json, and a damaged file is never overwritten.
+    #expect(makeSession().actions == session.actions)
+    let url = session.historyDirectory.appendingPathComponent("Actions/actions.json")
+    try Data("not json".utf8).write(to: url)
+    let damaged = makeSession()
+    #expect(damaged.actionsLoadFailed && damaged.actions.actions.isEmpty)
+    damaged.actions.actions = session.actions.actions
+    #expect(try String(contentsOf: url, encoding: .utf8) == "not json")
 }

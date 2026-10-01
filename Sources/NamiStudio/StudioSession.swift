@@ -10,7 +10,11 @@ import NamiMLXCleanup
 
 public enum StudioPhase: String, Sendable {
     case idle, preparing, recording, processing, cancelling, failed
+    /// The microphone could not start; the indicator asks for another one.
+    case choosingMicrophone
     public var busy: Bool { self != .idle && self != .failed }
+    /// The indicator's close button and Escape cancel these phases.
+    public var cancellableFromIndicator: Bool { self == .recording || self == .choosingMicrophone }
 }
 
 public enum RecordingOutcome: String, Codable, Sendable {
@@ -36,11 +40,17 @@ public struct RecordingRun: Identifiable, Codable, Sendable {
     public var outcome: RecordingOutcome = .completed
     public var rawTranscript: String?
     public var cleanupResult: CleanupResult?
+    /// Set when the transcript was replaced by this snippet; `rawTranscript` keeps what was said.
+    public var snippetName: String?
+    /// Set when the recording ran this action instead of being pasted.
+    public var actionName: String?
+    /// Wait from the end of the recording until speech recognition returned text, before cleanup.
+    public var transcriptionSeconds: Double?
 
     private enum CodingKeys: String, CodingKey {
         case id, date, transcript, audioSeconds, latency, averageDB, peakDB
         case input, savedURL, engine, model, prompt, outcome
-        case rawTranscript, cleanupResult
+        case rawTranscript, cleanupResult, snippetName, actionName, transcriptionSeconds
     }
 
     public var displayText: String {
@@ -81,10 +91,17 @@ public final class StudioSession {
     public private(set) var captureStartSeconds: Double?
     public private(set) var firstAudioSeconds: Double?
     public private(set) var elapsed = 0.0
+    /// The microphone is open but has only sent digital silence, as Bluetooth
+    /// headsets do for a second or more while they switch to their microphone.
+    public private(set) var awaitingMicrophone = false
+    /// How long an open microphone may stay silent before Nami asks for another.
+    var microphoneWarmupTimeout: Duration = .seconds(6)
     public private(set) var level = 0.0
     public private(set) var meterHistory = Array(repeating: 0.0, count: 64)
     public private(set) var inputName = "System default microphone"
     public private(set) var inputDevices: [AudioInputDevice] = []
+    /// Why the indicator is asking for a microphone; set only while choosing one.
+    public private(set) var microphoneIssue: String?
     /// nil when the selected microphone has no settable hardware volume.
     public private(set) var inputVolume: Double?
     public private(set) var capturedSeconds = 0.0
@@ -98,9 +115,34 @@ public final class StudioSession {
     public private(set) var pinnedDestination: PinnedTranscriptDestination?
     public private(set) var pinNotice: String?
     public let debugging: DebuggingSession
+    public var snippets = SnippetLibrary() {
+        didSet {
+            guard snippets != oldValue, !snippetsLoadFailed, !applyingStoredSnippets else { return }
+            do { try snippetStore.save(snippets); snippetsModified = snippetStore.modificationDate() }
+            catch { errorMessage = "Could not save snippets: \(error.localizedDescription)" }
+        }
+    }
+    /// A damaged snippets file is kept as is; edits stay in memory until it is fixed.
+    public private(set) var snippetsLoadFailed = false
+    public var actions = ActionLibrary() {
+        didSet {
+            guard actions != oldValue, !actionsLoadFailed, !applyingStoredActions else { return }
+            do { try actionStore.save(actions); actionsModified = actionStore.modificationDate() }
+            catch { errorMessage = "Could not save actions: \(error.localizedDescription)" }
+        }
+    }
+    /// A damaged actions file is kept as is; edits stay in memory until it is fixed.
+    public private(set) var actionsLoadFailed = false
     var cleanupService: CleanupService { debugging.cleanupLab.service }
 
     @ObservationIgnored private let historyStore: RecordingHistoryStore
+    @ObservationIgnored private let snippetStore: SnippetStore
+    @ObservationIgnored private var snippetsModified: Date?
+    @ObservationIgnored private var applyingStoredSnippets = false
+    @ObservationIgnored private let actionStore: ActionStore
+    @ObservationIgnored private var actionsModified: Date?
+    @ObservationIgnored private var applyingStoredActions = false
+    @ObservationIgnored private let actionRunner: ActionStepRunner
     @ObservationIgnored private let engineBuilder: @MainActor (StudioSettings) throws -> any TranscriptionEngine
     @ObservationIgnored private let captureBuilder: @MainActor (String?) -> any AudioCapturing
     @ObservationIgnored private let inputDevicesProvider: @MainActor () -> [AudioInputDevice]
@@ -120,6 +162,7 @@ public final class StudioSession {
     @ObservationIgnored private var capture: (any AudioCapturing)?
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var ticker: Task<Void, Never>?
+    @ObservationIgnored private var microphoneWatch: Task<Void, Never>?
     @ObservationIgnored private var activeID: UUID?
     @ObservationIgnored private var stoppedAt: ContinuousClock.Instant?
     @ObservationIgnored private var player: AVAudioPlayer?
@@ -140,9 +183,14 @@ public final class StudioSession {
                 inputDevicesProvider: @escaping @MainActor () -> [AudioInputDevice] = { AudioInputDevice.available() },
                 // Unavailable by default: the live control changes the level for every app.
                 inputVolumeControl: InputVolumeControl = .unavailable,
+                // Unavailable by default: the live runner opens apps and runs commands.
+                actionRunner: @escaping ActionStepRunner = { _ in throw StudioError.message("Actions are unavailable.") },
                 clipboardWriter: @escaping @MainActor (String) -> Bool) {
         self.project = project
         self.historyStore = RecordingHistoryStore(directory: historyDirectory ?? RecordingHistoryStore.defaultDirectory)
+        self.snippetStore = SnippetStore(url: historyDirectory?.appendingPathComponent("Snippets/snippets.json") ?? SnippetStore.defaultURL)
+        self.actionStore = ActionStore(url: historyDirectory?.appendingPathComponent("Actions/actions.json") ?? ActionStore.defaultURL)
+        self.actionRunner = actionRunner
         let debuggingDirectory = historyDirectory?.appendingPathComponent("InternalDebugging")
             ?? RecordingHistoryStore.defaultDirectory.deletingLastPathComponent().appendingPathComponent("InternalDebugging")
         self.debugging = DebuggingSession(directory: debuggingDirectory,
@@ -183,6 +231,18 @@ public final class StudioSession {
                 errorMessage = "Some history could not be loaded. Existing files were kept. " + history.warnings.joined(separator: "\n")
             }
         } catch { errorMessage = "Could not load recording history: \(error.localizedDescription)" }
+        snippetsModified = snippetStore.modificationDate()
+        do { snippets = try snippetStore.load() }
+        catch {
+            snippetsLoadFailed = true
+            errorMessage = "Could not load snippets. The file was kept unchanged: \(error.localizedDescription)"
+        }
+        actionsModified = actionStore.modificationDate()
+        do { actions = try actionStore.load() }
+        catch {
+            actionsLoadFailed = true
+            errorMessage = "Could not load actions. The file was kept unchanged: \(error.localizedDescription)"
+        }
         refreshInput()
     }
 
@@ -190,12 +250,47 @@ public final class StudioSession {
     public static func systemPastePreparer() -> PreparedTranscriptPaste { TranscriptPaster().prepare() }
     public static func systemDestinationPinner() async -> TranscriptPinAttempt { await TranscriptPaster().pin() }
     public static func systemCapture(deviceUID: String?) -> any AudioCapturing { MicrophoneCapture(deviceUID: deviceUID) }
+    public static func systemActionRunner(_ step: ActionStep) async throws { try await SystemActionRunner.run(step) }
     public static func systemClipboardWriter(_ text: String) -> Bool {
         NSPasteboard.general.clearContents()
         return NSPasteboard.general.setString(text, forType: .string)
     }
 
     public var historyDirectory: URL { historyStore.directory }
+
+    /// Picks up edits made outside the app, such as by the `nami-snippets` CLI. Cheap when nothing changed.
+    public func refreshSnippetsIfChanged() {
+        let modified = snippetStore.modificationDate()
+        guard modified != snippetsModified else { return }
+        snippetsModified = modified
+        do {
+            let stored = try snippetStore.load()
+            applyingStoredSnippets = true
+            defer { applyingStoredSnippets = false }
+            snippets = stored
+            snippetsLoadFailed = false
+        } catch {
+            snippetsLoadFailed = true
+            errorMessage = "Could not load snippets. The file was kept unchanged: \(error.localizedDescription)"
+        }
+    }
+
+    /// Picks up edits made outside the app. Cheap when nothing changed.
+    public func refreshActionsIfChanged() {
+        let modified = actionStore.modificationDate()
+        guard modified != actionsModified else { return }
+        actionsModified = modified
+        do {
+            let stored = try actionStore.load()
+            applyingStoredActions = true
+            defer { applyingStoredActions = false }
+            actions = stored
+            actionsLoadFailed = false
+        } catch {
+            actionsLoadFailed = true
+            errorMessage = "Could not load actions. The file was kept unchanged: \(error.localizedDescription)"
+        }
+    }
     public var selectedRun: RecordingRun? { runs.first { $0.id == selectedRunID } ?? runs.first }
     public var selectedPrompt: ReadingPrompt? { prompts.first { $0.id == selectedPromptID } }
     public var modelName: String {
@@ -205,6 +300,8 @@ public final class StudioSession {
         guard let uid = settings.microphoneUID else { return false }
         return !inputDevices.contains { $0.id == uid }
     }
+    /// The system default is only worth offering when a specific microphone failed.
+    public var offersSystemDefaultMicrophone: Bool { settings.microphoneUID != nil && !inputDevices.isEmpty }
 
     public func refreshInput() {
         guard !phase.busy else { return }
@@ -300,7 +397,9 @@ public final class StudioSession {
                 engine: options.cleanupEngine, timeout: options.cleanupTimeoutSeconds) : nil
             let liveAudio = AsyncThrowingStream<AudioChunk, Error>.makeStream()
             var feeding: Task<Void, Error>?
-            defer { liveAudio.continuation.finish(); feeding?.cancel() }
+            var warmup: Task<Void, Never>?
+            var captureStarted = false
+            defer { liveAudio.continuation.finish(); feeding?.cancel(); warmup?.cancel() }
             do {
                 try self.check(id)
                 self.refreshPermissions()
@@ -308,14 +407,22 @@ public final class StudioSession {
                 let capture = self.captureBuilder(options.microphoneUID)
                 self.capture = capture
                 let stream = try await capture.start()
+                captureStarted = true
                 try self.check(id)
                 self.captureStartSeconds = Self.seconds(since: requestedAt)
                 Self.startupLog.info("Microphone started after \(self.captureStartSeconds!, privacy: .public) seconds")
                 self.inputName = capture.inputDescription
                 self.phase = .recording
-                self.status = "Listening. Speak naturally."
+                self.awaitingMicrophone = true
+                self.status = "Waiting for the microphone…"
                 if options.cleanupEnabled { self.cleanupService.prewarm(options.cleanupEngine) }
-                let startedAt = ContinuousClock.now
+                let timeout = self.microphoneWarmupTimeout
+                warmup = Task { [weak self] in
+                    try? await Task.sleep(for: timeout)
+                    guard !Task.isCancelled, let self, self.activeID == id, self.awaitingMicrophone else { return }
+                    // Ending the stream without audio offers another microphone.
+                    capture.stop()
+                }
                 // Capture must never wait for the model. Drain the stream into
                 // our recording buffer while preparation runs separately.
                 let preparation = try self.preparationFor(options, retryFailure: true)
@@ -336,30 +443,40 @@ public final class StudioSession {
                     try self.check(id)
                 }
                 feeding = feed
-                self.ticker = Task { [weak self] in
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .milliseconds(50))
-                        guard !Task.isCancelled, let self, self.phase == .recording else { return }
-                        self.elapsed = Self.seconds(since: startedAt)
-                    }
-                }
                 for try await chunk in stream {
                     try self.check(id)
-                    if self.firstAudioSeconds == nil {
+                    var audio = chunk.samples
+                    if self.awaitingMicrophone {
+                        // Exact zeros are a device that is not ready yet, never a quiet room,
+                        // so "Listening" and the take begin with the first real sound.
+                        guard let first = audio.firstIndex(where: { $0 != 0 }) else { continue }
+                        audio.removeFirst(first)
+                        self.awaitingMicrophone = false
+                        warmup?.cancel()
+                        if self.phase == .recording { self.status = "Listening. Speak naturally." }
                         self.firstAudioSeconds = Self.seconds(since: requestedAt)
                         Self.startupLog.info("First audio received after \(self.firstAudioSeconds!, privacy: .public) seconds")
+                        let startedAt = ContinuousClock.now
+                        self.ticker = Task { [weak self] in
+                            while !Task.isCancelled {
+                                try? await Task.sleep(for: .milliseconds(50))
+                                guard !Task.isCancelled, let self, self.phase == .recording else { return }
+                                self.elapsed = Self.seconds(since: startedAt)
+                            }
+                        }
                     }
                     let timestamp = Double(samples.count) / AudioChunk.sampleRate
-                    samples += chunk.samples
-                    liveAudio.continuation.yield(AudioChunk(samples: chunk.samples, timestamp: timestamp))
-                    stats.append(chunk.samples)
-                    var instant = AudioStatistics(); instant.append(chunk.samples)
+                    samples += audio
+                    liveAudio.continuation.yield(AudioChunk(samples: audio, timestamp: timestamp))
+                    stats.append(audio)
+                    var instant = AudioStatistics(); instant.append(audio)
                     self.level = max(0, min(1, (instant.rmsDBFS + 60) / 60))
                     self.meterHistory.removeFirst(); self.meterHistory.append(self.level)
                     self.capturedSeconds = stats.duration
                     self.averageDB = stats.rmsDBFS
                 }
                 self.ticker?.cancel()
+                self.awaitingMicrophone = false
                 speculative?.recordingEnded()
                 liveAudio.continuation.finish()
                 capture.stop()
@@ -389,19 +506,70 @@ public final class StudioSession {
                 rawText = text
                 try await self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
                               latency: Self.seconds(since: stop), input: self.inputName,
-                              options: options, prompt: prompt, paste: paste, allowsPin: true, speculative: speculative)
+                              options: options, prompt: prompt, paste: paste, allowsPin: true, runsActions: true,
+                              speculative: speculative)
                 await speculative?.cancel()
             } catch {
                 await speculative?.cancel()
                 liveAudio.continuation.finish()
                 feeding?.cancel()
                 _ = await feeding?.result
-                self.keepUnfinished(id: id, date: date, samples: samples, statistics: stats,
-                                    input: self.inputName, options: options, prompt: prompt, error: error, rawText: rawText)
-                await self.failed(error, id: id)
+                let issue = samples.isEmpty ? Self.microphoneIssue(for: error, beforeCapture: !captureStarted) : nil
+                if let issue, await self.offerMicrophoneChoice(issue, id: id) {
+                    // Nothing was recorded, so there is no take to keep.
+                } else {
+                    self.keepUnfinished(id: id, date: date, samples: samples, statistics: stats,
+                                        input: self.inputName, options: options, prompt: prompt, error: error, rawText: rawText)
+                    await self.failed(error, id: id)
+                }
             }
             self.cleanup(id)
         }
+    }
+
+    /// Picks the microphone the indicator asked for, then starts the recording
+    /// that could not begin. A nil UID follows the system default.
+    public func chooseMicrophone(_ uid: String?) {
+        guard phase == .choosingMicrophone else { return }
+        endMicrophoneChoice()
+        phase = .idle
+        settings.microphoneUID = uid
+        startRecording()
+    }
+
+    /// Only failures that another microphone could fix ask for one.
+    static func microphoneIssue(for error: Error, beforeCapture: Bool) -> String? {
+        switch error as? AudioInputError {
+        case .deviceUnavailable: return "Your microphone isn’t connected."
+        case .noAudioReceived: return "No sound came from your microphone."
+        case .permissionDenied: return nil
+        default: return beforeCapture && !(error is CancellationError) ? "Your microphone couldn’t start." : nil
+        }
+    }
+
+    private func offerMicrophoneChoice(_ issue: String, id: UUID) async -> Bool {
+        capture?.stop(); capture = nil; ticker?.cancel()
+        await engine?.cancel(sessionID: id)
+        guard activeID == id, phase != .cancelling else { return false }
+        inputDevices = inputDevicesProvider()
+        microphoneIssue = issue
+        phase = .choosingMicrophone
+        status = "Choose a microphone to start recording."
+        // Polling keeps the choices current when a microphone is plugged in.
+        microphoneWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled, let self, self.phase == .choosingMicrophone else { return }
+                let devices = self.inputDevicesProvider()
+                if devices != self.inputDevices { self.inputDevices = devices }
+            }
+        }
+        return true
+    }
+
+    private func endMicrophoneChoice() {
+        microphoneWatch?.cancel(); microphoneWatch = nil
+        microphoneIssue = nil
     }
 
     public func transcribeFile(_ url: URL) {
@@ -445,6 +613,8 @@ public final class StudioSession {
                 let engine = try await self.preparedEngine(options)
                 try self.check(id)
                 await engine.setPromptObserver(self.debugging.promptStore.observer(source: previous == nil ? "Audio import" : "History retry"))
+                // Files are fed faster than real time, so recognition starts with the first chunk.
+                let stop = ContinuousClock.now
                 try await engine.start(sessionID: id, language: options.language == "auto" ? nil : options.language,
                                        vocabulary: options.vocabulary, onPartial: nil)
                 for offset in stride(from: 0, to: samples.count, by: 1600) {
@@ -456,7 +626,6 @@ public final class StudioSession {
                 self.capturedSeconds = stats.duration
                 self.elapsed = stats.duration
                 self.averageDB = stats.rmsDBFS
-                let stop = ContinuousClock.now
                 let text = try await engine.finish(sessionID: id)
                 try self.check(id)
                 rawText = text
@@ -493,6 +662,7 @@ public final class StudioSession {
         switch phase {
         case .idle, .failed: startRecording()
         case .recording: stopRecording()
+        case .choosingMicrophone: cancel()
         case .preparing, .processing, .cancelling: break
         }
     }
@@ -534,6 +704,13 @@ public final class StudioSession {
     }
 
     public func cancel() {
+        if phase == .choosingMicrophone {
+            endMicrophoneChoice()
+            phase = .idle
+            status = "Recording cancelled. Ready when you are."
+            refreshInput()
+            return
+        }
         guard phase.busy, phase != .cancelling else { return }
         phase = .cancelling
         status = "Cancelling…"
@@ -606,7 +783,7 @@ public final class StudioSession {
     private func begin(id: UUID? = nil) -> UUID {
         stopPlayback()
         errorMessage = nil; phase = .preparing; isCleaningUp = false; isPasting = false; status = "Preparing the local model…"
-        elapsed = 0; capturedSeconds = 0; level = 0; averageDB = -.infinity
+        elapsed = 0; capturedSeconds = 0; level = 0; averageDB = -.infinity; awaitingMicrophone = false
         captureStartSeconds = nil; firstAudioSeconds = nil
         meterHistory = Array(repeating: 0, count: 64)
         let id = id ?? UUID(); activeID = id; stoppedAt = nil
@@ -664,12 +841,15 @@ public final class StudioSession {
 
     private func archive(id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
                          latency: Double = 0, input: String, options: StudioSettings, prompt: String,
-                         outcome: RecordingOutcome, rawText: String? = nil, cleanupResult: CleanupResult? = nil) -> RecordingRun {
+                         outcome: RecordingOutcome, rawText: String? = nil, cleanupResult: CleanupResult? = nil,
+                         snippetName: String? = nil, actionName: String? = nil,
+                         transcriptionSeconds: Double? = nil) -> RecordingRun {
         let run = RecordingRun(id: id, date: date, transcript: text, audioSeconds: statistics.duration,
             latency: latency, averageDB: statistics.rmsDBFS, peakDB: statistics.peakDBFS,
             input: input, savedURL: nil, engine: options.engine,
             model: options.engine == "fast" ? "Parakeet Ultra · Whisper verification" : URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: prompt,
-            samples: samples, outcome: outcome, rawTranscript: rawText, cleanupResult: cleanupResult)
+            samples: samples, outcome: outcome, rawTranscript: rawText, cleanupResult: cleanupResult, snippetName: snippetName,
+            actionName: actionName, transcriptionSeconds: transcriptionSeconds)
         do { return try historyStore.save(run) }
         catch {
             errorMessage = "Could not save this recording to history. Keep Nami open to retain its audio and text. \(error.localizedDescription)"
@@ -687,22 +867,58 @@ public final class StudioSession {
         selectedRunID = id
     }
 
+    /// An action replaces pasting: nothing is copied, cleaned up, or typed, and history keeps what was said.
+    private func perform(_ match: ActionMatch, id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
+                         latency: Double, transcriptionSeconds: Double, input: String, options: StudioSettings, prompt: String) async {
+        let title = match.action.title
+        status = "Running “\(title)”…"
+        var failure: String?
+        for step in match.steps {
+            do { try await actionRunner(step) }
+            catch { failure = error.localizedDescription; break }
+        }
+        let run = archive(id: id, date: date, text: text, samples: samples, statistics: statistics, latency: latency,
+                          input: input, options: options, prompt: prompt, outcome: .completed, actionName: title,
+                          transcriptionSeconds: transcriptionSeconds)
+        runs.insert(run, at: 0)
+        selectedRunID = id
+        if let failure {
+            status = "Action “\(title)” failed."
+            errorMessage = "Action “\(title)” failed: \(failure)"
+        } else {
+            status = "Ran action “\(title)”."
+        }
+        phase = .idle
+    }
+
     private func complete(id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
                           latency: Double, input: String, options: StudioSettings, prompt: String,
-                          paste: PreparedTranscriptPaste? = nil, allowsPin: Bool = false,
+                          paste: PreparedTranscriptPaste? = nil, allowsPin: Bool = false, runsActions: Bool = false,
                           replacing previous: RecordingRun? = nil, speculative: SpeculativeCleanup? = nil) async throws {
         let started = ContinuousClock.now
+        // Only live dictation runs actions; imports and retries just transcribe.
+        refreshActionsIfChanged()
+        if runsActions, let match = actions.match(text) {
+            await perform(match, id: id, date: date, text: text, samples: samples, statistics: statistics,
+                          latency: latency + Self.seconds(since: started), transcriptionSeconds: latency,
+                          input: input, options: options, prompt: prompt)
+            return
+        }
         let original = text
         var text = text
         var processing: CleanupResult?
-        if options.cleanupEnabled, !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // A snippet replaces the dictation with the user's own text, so cleanup must not rewrite it.
+        refreshSnippetsIfChanged()
+        let snippet = snippets.expand(original)
+        if let snippet { text = snippet.text }
+        else if options.cleanupEnabled, !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             isCleaningUp = true
             status = "Cleaning up your dictation…"
             // Persist ASR before awaiting another model, including when the app is interrupted.
             if previous == nil {
                 _ = archive(id: id, date: date, text: original, samples: samples, statistics: statistics,
                             latency: latency, input: input, options: options, prompt: prompt,
-                            outcome: .interrupted, rawText: original)
+                            outcome: .interrupted, rawText: original, transcriptionSeconds: latency)
             }
             let memory = options.cleanupUseMemory ? debugging.cleanupLab.memory : CleanupMemory()
             var request = CleanupRequest(id: id, rawText: original, language: options.language, memory: memory)
@@ -726,14 +942,15 @@ public final class StudioSession {
                 averageDB: previous.averageDB, peakDB: previous.peakDB, input: previous.input,
                 savedURL: previous.savedURL, engine: options.engine,
                 model: options.engine == "fast" ? "Parakeet Ultra · Whisper verification" : URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: previous.prompt,
-                samples: samples, outcome: .completed, rawTranscript: options.cleanupEnabled ? original : nil,
-                cleanupResult: processing)
+                samples: samples, outcome: .completed, rawTranscript: options.cleanupEnabled || snippet != nil ? original : nil,
+                cleanupResult: processing, snippetName: snippet?.snippet.title, transcriptionSeconds: latency)
             let stored = try historyStore.save(run)
             if let index = runs.firstIndex(where: { $0.id == id }) { runs[index] = stored }
         } else {
             let run = archive(id: id, date: date, text: text, samples: samples, statistics: statistics,
                           latency: latency + Self.seconds(since: started), input: input, options: options, prompt: prompt,
-                          outcome: .completed, rawText: options.cleanupEnabled ? original : nil, cleanupResult: processing)
+                          outcome: .completed, rawText: options.cleanupEnabled || snippet != nil ? original : nil,
+                          cleanupResult: processing, snippetName: snippet?.snippet.title, transcriptionSeconds: latency)
             runs.insert(run, at: 0)
         }
         selectedRunID = id
@@ -757,6 +974,8 @@ public final class StudioSession {
             }
         }
         if let processing, !processing.succeeded { status += " Cleanup skipped; original text kept." }
+        if let snippet { status += " Used snippet “\(snippet.snippet.title)”." }
+        else if snippets.mentionsTrigger(original) { status += " No snippet matched, so your words were kept as said." }
         isPasting = false
         // Keep the indicator processing until publication and the paste handoff finish.
         phase = .idle
@@ -779,6 +998,7 @@ public final class StudioSession {
     private func cleanup(_ id: UUID) {
         guard activeID == id else { return }
         activeID = nil; operation = nil; ticker?.cancel(); ticker = nil; level = 0; isCleaningUp = false; isPasting = false
+        awaitingMicrophone = false
         retranscribingRunID = nil
         if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }
     }

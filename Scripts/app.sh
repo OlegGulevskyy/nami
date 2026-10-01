@@ -53,7 +53,12 @@ if (( ! NAMI_PACKAGE_ONLY )); then
     -configuration "$NAMI_CONFIGURATION" -derivedDataPath .build/xcode \
     -destination 'platform=macOS,arch=arm64' \
     CODE_SIGNING_ALLOWED=NO ARCHS=arm64 build
+  # Command-line tools used by the agent skills in Settings. NamiCore only, so quick.
+  for tool in nami-snippets nami-actions; do
+    swift build --quiet -c release --product "$tool"
+  done
 fi
+NAMI_TOOLS_DIR="$(swift build -c release --show-bin-path)"
 NAMI_BUILT_APP="$NAMI_PROJECT_DIR/.build/xcode/Build/Products/$NAMI_CONFIGURATION/Nami.app"
 if [[ ! -d "$NAMI_BUILT_APP" ]]; then
   print -u2 'No Xcode app build found. Run ./Scripts/app.sh without --package-only first.'
@@ -66,6 +71,14 @@ trap 'rm -rf "$NAMI_STAGING_DIR"' EXIT ZERR
 NAMI_STAGED_APP="$NAMI_STAGING_DIR/Nami.app"
 ditto "$NAMI_BUILT_APP" "$NAMI_STAGED_APP"
 rm -f "$NAMI_STAGED_APP/Contents/Resources/workspace.json"
+mkdir -p "$NAMI_STAGED_APP/Contents/Helpers"
+for tool in nami-snippets nami-actions; do
+  if [[ ! -x "$NAMI_TOOLS_DIR/$tool" ]]; then
+    print -u2 "No $tool build found. Run ./Scripts/app.sh without --package-only first."
+    exit 1
+  fi
+  ditto "$NAMI_TOOLS_DIR/$tool" "$NAMI_STAGED_APP/Contents/Helpers/$tool"
+done
 if (( ! NAMI_DISTRIBUTION )); then
   python3 - "$NAMI_PROJECT_DIR" "$NAMI_STAGED_APP" <<'PYTHON'
 import json, sys

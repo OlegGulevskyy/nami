@@ -15,6 +15,11 @@ public struct StudioSettingsView: View {
     @State private var loginStatus: SMAppService.Status?
     @Environment(\.studioPageVisible) private var visible
     @State private var loginError: String?
+    /// The helpers folder holding the bundled command-line tools; nil when this build has none.
+    @State private var skillTools: URL?
+    @State private var skillStatuses: [String: AgentSkillStatus] = [:]
+    @State private var skillConfirmation: SkillConfirmation?
+    @State private var skillsError: String?
 
     public init(session: StudioSession, page: Page = .general) {
         self.session = session
@@ -225,6 +230,111 @@ public struct StudioSettingsView: View {
             }
             updateSettings
         }
+        section("Agent skills") {
+            Text("Teach Claude Code and other coding agents to manage your snippets and actions.")
+                .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
+                .fixedSize(horizontal: false, vertical: true).padding(.bottom, 4)
+            row("Install to", subtitle: (skillsFolder.path as NSString).abbreviatingWithTildeInPath) {
+                Menu {
+                    Button("Claude Code") { session.settings.skillsFolder = "" }
+                    Button("Other agents") { session.settings.skillsFolder = AgentSkillInstaller.agentsFolder.path }
+                    Button("Choose folder…", action: chooseSkillsFolder)
+                    Divider()
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skillsFolder]) }
+                        .disabled(!FileManager.default.fileExists(atPath: skillsFolder.path))
+                } label: { Text(skillsFolderTitle) }
+                    .preferenceMenu().accessibilityLabel("Install skills to \(skillsFolder.path)")
+            }
+            ForEach(AgentSkill.bundled) { skill in skillRow(skill) }
+            if skillTools == nil {
+                Text("This build doesn’t include Nami’s command-line tools, so skills can’t be installed.")
+                    .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet).padding(.top, 6)
+            }
+            if let skillsError {
+                Label(skillsError, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled).padding(.top, 6)
+            }
+        }
+        .onChange(of: session.settings.skillsFolder) { refreshSkills() }
+        .confirmationDialog(skillConfirmation?.title ?? "", isPresented: Binding(
+            get: { skillConfirmation != nil }, set: { if !$0 { skillConfirmation = nil } }
+        ), titleVisibility: .visible, presenting: skillConfirmation) { confirmation in
+            switch confirmation {
+            case .remove(let skill): Button("Remove", role: .destructive) { changeSkill(skill) { try $0.remove(skill) } }
+            case .replace(let skill): Button("Replace", role: .destructive) { changeSkill(skill) { try $0.install(skill) } }
+            }
+        } message: { confirmation in
+            Text(confirmation.message)
+        }
+    }
+
+    private func skillRow(_ skill: AgentSkill) -> some View {
+        let status = skillStatuses[skill.name] ?? .notInstalled
+        return row(skill.title, subtitle: "\(skill.name) · \(skillStatusText(status, bundled: skill.version))") {
+            HStack(spacing: 14) {
+                switch status {
+                case .notInstalled:
+                    Button("Install") { changeSkill(skill) { try $0.install(skill) } }
+                        .buttonStyle(.plain).preferenceControl().accessibilityLabel("Install \(skill.name)")
+                case .outdated:
+                    Button("Update") { changeSkill(skill) { try $0.install(skill) } }
+                        .buttonStyle(.plain).preferenceControl().accessibilityLabel("Update \(skill.name)")
+                case .changed, .newer:
+                    Button("Reinstall") { skillConfirmation = .replace(skill) }
+                        .buttonStyle(.plain).preferenceControl().accessibilityLabel("Reinstall \(skill.name)")
+                case .current:
+                    Label("Installed", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12)).foregroundStyle(StudioStyle.green)
+                }
+                if status != .notInstalled {
+                    Button { skillConfirmation = .remove(skill) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.plain).foregroundStyle(StudioStyle.quiet)
+                        .help("Remove skill").accessibilityLabel("Remove \(skill.name)")
+                }
+            }
+            .disabled(skillTools == nil)
+        }
+    }
+
+    private func skillStatusText(_ status: AgentSkillStatus, bundled: Int) -> String {
+        switch status {
+        case .notInstalled: "Not installed"
+        case .current: "Version \(bundled), up to date"
+        case .outdated(let installed): "Version \(installed.map(String.init) ?? "unknown") installed, version \(bundled) available"
+        case .changed: "Version \(bundled), edited since it was installed or Nami has moved"
+        case .newer(let installed): "Version \(installed) from a newer Nami; this app has version \(bundled)"
+        }
+    }
+
+    private var skillsFolder: URL {
+        session.settings.skillsFolder.isEmpty ? AgentSkillInstaller.claudeCodeFolder
+            : URL(fileURLWithPath: (session.settings.skillsFolder as NSString).expandingTildeInPath, isDirectory: true)
+    }
+
+    private var skillsFolderTitle: String {
+        switch skillsFolder.standardizedFileURL {
+        case AgentSkillInstaller.claudeCodeFolder.standardizedFileURL: "Claude Code"
+        case AgentSkillInstaller.agentsFolder.standardizedFileURL: "Other agents"
+        default: "Custom folder"
+        }
+    }
+
+    private func refreshSkills() {
+        skillTools = AgentSkillInstaller.bundledTools
+        guard let skillTools else { skillStatuses = [:]; return }
+        let installer = AgentSkillInstaller(folder: skillsFolder, tools: skillTools)
+        skillStatuses = Dictionary(uniqueKeysWithValues: AgentSkill.bundled.map { ($0.name, installer.status($0)) })
+    }
+
+    private func changeSkill(_ skill: AgentSkill, _ change: (AgentSkillInstaller) throws -> Void) {
+        guard let skillTools else { return }
+        do {
+            try change(AgentSkillInstaller(folder: skillsFolder, tools: skillTools))
+            skillsError = nil
+        } catch {
+            skillsError = "Could not change \(skill.name). \(error.localizedDescription)"
+        }
+        refreshSkills()
     }
 
     @ViewBuilder private var shortcuts: some View {
@@ -414,7 +524,7 @@ public struct StudioSettingsView: View {
     }
 
     private var languages: [(code: String, name: String)] {
-        [("auto", "Auto-detect"), ("en", "English"), ("fr", "French"), ("uk", "Ukrainian"), ("es", "Spanish"), ("de", "German")]
+        [("auto", "Auto-detect"), ("en", "English"), ("fr", "French"), ("uk", "Ukrainian"), ("ru", "Russian"), ("es", "Spanish"), ("de", "German")]
     }
     private func heading(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -453,6 +563,14 @@ public struct StudioSettingsView: View {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
         if panel.runModal() == .OK, let url = panel.url { session.settings.audioDirectory = url.path }
     }
+    private func chooseSkillsFolder() {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
+        panel.canCreateDirectories = true; panel.showsHiddenFiles = true
+        panel.directoryURL = skillsFolder
+        panel.message = "Choose the skills folder your coding agent reads, such as ~/.claude/skills."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        session.settings.skillsFolder = url.standardizedFileURL == AgentSkillInstaller.claudeCodeFolder.standardizedFileURL ? "" : url.path
+    }
     private func openSoundSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") { NSWorkspace.shared.open(url) }
     }
@@ -462,6 +580,7 @@ public struct StudioSettingsView: View {
         case .general:
             session.refreshInput()
             Task { loginStatus = await Task.detached { SMAppService.mainApp.status }.value }
+            refreshSkills()
         case .shortcuts: session.modifierShortcut.refresh()
         case .model, .about: break
         }
@@ -477,7 +596,7 @@ public struct StudioSettingsView: View {
     }
 }
 
-private extension View {
+extension View {
     @ViewBuilder func preferenceControl() -> some View {
         let control = font(.system(size: 13)).foregroundStyle(StudioStyle.green)
             .padding(.horizontal, 11).frame(minHeight: 32)
@@ -491,5 +610,23 @@ private extension View {
     }
     func preferenceMenu() -> some View {
         menuStyle(.borderlessButton).fixedSize().preferenceControl()
+    }
+}
+
+private enum SkillConfirmation {
+    case remove(AgentSkill), replace(AgentSkill)
+
+    var title: String {
+        switch self {
+        case .remove(let skill): "Remove the \(skill.name) skill?"
+        case .replace(let skill): "Replace the \(skill.name) skill?"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .remove: "Coding agents will no longer know how to use it. Its folder is moved to the Trash."
+        case .replace: "The installed skill differs from this app’s version. Any edits to it will be lost."
+        }
     }
 }

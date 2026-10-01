@@ -131,12 +131,14 @@ public final class MicrophoneCapture: AudioCapturing {
             guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AudioInputError.permissionDenied }
         }
         let pair = AsyncThrowingStream<AudioChunk, Error>.makeStream(bufferingPolicy: .bufferingOldest(128))
-        if let deviceUID {
-            // On macOS AVAudioEngine's input and output share one I/O unit, and
-            // switching only its input device leaves a stale format: depending on
-            // the device the engine fails to start or runs without delivering
-            // buffers. An input-only HAL unit opens exactly the selected device.
-            let device = try AudioInputDevice.deviceID(for: deviceUID)
+        // On macOS AVAudioEngine's input and output share one I/O unit, and
+        // switching only its input device leaves a stale format: depending on
+        // the device the engine fails to start or runs without delivering
+        // buffers. An input-only HAL unit opens exactly the selected device.
+        // The system default goes the same way: a Bluetooth headset changes its
+        // output rate when its microphone opens, and the shared engine silently
+        // stops on that change, losing the rest of the recording.
+        if let device = try deviceUID.map({ try AudioInputDevice.deviceID(for: $0) }) ?? AudioInputDevice.defaultDeviceID() {
             let input = try DeviceInput(device: device)
             inputDescription = "\(Self.name(of: device)): \(Int(input.format.sampleRate)) Hz, \(input.format.channelCount) channel(s)"
             let tap = try makeTap(format: input.format, continuation: pair.continuation)

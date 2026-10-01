@@ -9,9 +9,11 @@ with an [implementation plan](tasks/plan.md) and [task checklist](tasks/todo.md)
 The **Playground** page supports transcription comparisons, local cleanup
 experiments, saved corrections, and editable model prompts.
 
+Designing or changing a page? Follow the [page design guide](docs/design.md).
+
 ## Playground
 
-Open **Playground** in the sidebar (**⌘2**). This is a separate
+Open **Playground** in the sidebar (**⌘4**). This is a separate
 local test workspace; it never automatically copies or pastes test results and
 does not change your normal dictation model.
 
@@ -77,6 +79,125 @@ stay in the local Playground workspace across launches. History keeps up to 200
 requests within an 8 MB text budget, so it is a recent diagnostic log, not an unlimited
 archive. It cannot reconstruct prompts from runs made before this feature.
 
+## Snippets
+
+Open **Snippets** in the sidebar (**⌘2**) to save text you dictate often. Each
+snippet has comma-separated phrases and text with `{{…}}` placeholders; the first
+phrase names it in history. Say the trigger word (default `snippet`, editable on
+the page), one of the snippet's phrases, then the details. Snippets are read-only
+in the list; use the pencil to edit, then **Save** or **Cancel**. **How it works** on
+the page summarizes this:
+
+> "free env snippet for Excel add-in, Users API"
+
+With the text `Hey @gptqa, is there a free environment to deploy {{apps}}`, Nami
+pastes `Hey @gptqa, is there a free environment to deploy Excel add-in, Users API`.
+
+- Matching is literal and ignores case and punctuation; the longest matching
+  phrase wins. Recordings without a trigger word are pasted as usual. Leave the
+  trigger words empty to turn snippets off.
+- Details are the words after the phrase, without the trigger word and leading
+  words such as "for" or "для". Commas, semicolons, "and", "plus", "и", and
+  "плюс" separate them.
+- Nothing is translated. To use snippets in several languages, list a trigger
+  word per language (`snippet, сниппет`) and add each snippet's phrases in each
+  language. In Russian dictation, English names may be recognized in Cyrillic
+  ("Эксель"), so add that spelling too.
+- One placeholder gets every detail, joined with commas. With several, details
+  fill them in order and the last takes the rest; repeated labels share a value.
+  Placeholders with no detail stay visible in the pasted text.
+- Snippet text skips AI cleanup. History shows the snippet used and keeps what
+  you said under **Show original**.
+
+Snippets are saved in `~/Library/Application Support/Nami/snippets.json`, not in
+`nami.json`. A damaged file is left untouched and is not overwritten.
+
+### Manage snippets from the command line
+
+`Scripts/nami-snippets` builds and runs a small CLI (NamiCore only, so it builds
+in seconds) that edits the same file. The running app picks up its changes
+within a second, and both lock the file while writing.
+
+```sh
+Scripts/nami-snippets list
+Scripts/nami-snippets add --phrases "free env, free environment" \
+    --text 'Hey @gptqa, is there a free environment to deploy {{apps}}'
+Scripts/nami-snippets try "free env snippet for Excel add-in, Users API"
+Scripts/nami-snippets update "free env" --phrases "free env, free environment, request env"
+Scripts/nami-snippets remove "free env"
+Scripts/nami-snippets trigger "snippet, сниппет"
+```
+
+Run `Scripts/nami-snippets help` for every option. The
+[nami-snippets skill](Sources/NamiStudio/Resources/Skills/nami-snippets/SKILL.md)
+teaches coding agents to create snippets with it; see [Agent skills](#agent-skills).
+
+## Actions
+
+Open **Actions** in the sidebar (**⌘3**) to do something on this Mac by voice
+instead of pasting. Each action has comma-separated phrases and one or more steps,
+run in order: open a link, app, file, or folder (links, files, and folders can
+open in a chosen app), run a Shortcut, or run a shell command. For example, the
+phrases `Open Excel repository, open Excel repo` with the step **Open link**
+`https://github.com/acme/excel-addin`, opened with `Google Chrome`, open that
+repository in Chrome when you say "Open Excel repo".
+
+- A recording runs an action only when it starts with one of its phrases.
+  Matching ignores case and punctuation; the longest phrase wins. Nothing is
+  translated, so for several languages add phrases in each one, e.g.
+  `open Excel repo, открой репозиторий Excel`.
+- Without placeholders the phrase must be all you say, so "Open Excel repo and
+  check the tests" is pasted as usual. Put `{{…}}` in a step to take the words
+  said after the phrase: `github.com/search?q={{query}}` with the phrase
+  `search GitHub` turns "search GitHub for snippet store" into a search. Details
+  are URL-encoded in links and quoted as one word in shell commands.
+- Links without a scheme open as `https://`. Shell commands run in a login `zsh`;
+  Nami waits up to five seconds to report a failure, then lets them finish on
+  their own. The first failing step stops the rest and shows its error.
+- Only live dictation runs actions; imported audio and re-transcribed recordings
+  are transcribed as usual. Nothing is copied, cleaned up, or pasted, and history
+  shows the action that ran.
+
+Actions are saved in `~/Library/Application Support/Nami/actions.json`, not in
+`nami.json`. A damaged file is left untouched and is not overwritten.
+
+### Manage actions from the command line
+
+`Scripts/nami-actions` builds and runs a CLI like `nami-snippets` (NamiCore only)
+that edits the same file; the running app picks up its changes within a second.
+Steps run in the order given, and `--with` opens the previous link, file, or
+folder in a chosen app.
+
+```sh
+Scripts/nami-actions list
+Scripts/nami-actions add --phrases "open Excel repo, open Excel repository" \
+    --open-url https://github.com/acme/excel-addin --with "Google Chrome"
+Scripts/nami-actions add --phrases "search GitHub" --open-url "github.com/search?q={{query}}"
+Scripts/nami-actions try "Open Excel repo"
+Scripts/nami-actions update "open Excel repo" --open-app "GitHub Desktop"
+Scripts/nami-actions remove "open Excel repo"
+```
+
+Other steps are `--open-file <path>`, `--shortcut <name>`, and `--command <command>`
+(`--command -` reads it from standard input). `try` shows what would run without
+running it. Run `Scripts/nami-actions help` for every option. The
+[nami-actions skill](Sources/NamiStudio/Resources/Skills/nami-actions/SKILL.md)
+teaches coding agents to create actions with it; see [Agent skills](#agent-skills).
+
+### Agent skills
+
+The app ships both CLIs in `Nami.app/Contents/Helpers`, so they work without this
+checkout. **Settings → Agent skills** installs a skill for each into Claude Code's
+`~/.claude/skills`, the shared `~/.agents/skills`, or a folder you choose (for
+example your `CLAUDE_CONFIG_DIR`/skills). Installed skills point at the CLIs in the
+running app. Each row shows whether its skill is installed, up to date, outdated,
+edited, or from a newer Nami; **Remove** moves the skill's folder to the Trash, and
+a symlinked skill is replaced or unlinked without touching its target.
+
+The skills live in `Sources/NamiStudio/Resources/Skills/`. Whenever you edit one,
+raise `metadata.version` in its front matter so installed copies show **Update**;
+`AgentSkillsTests` fails until the version and fingerprint are updated.
+
 ## Open the recording studio
 
 Build and open the app from this directory:
@@ -99,9 +220,9 @@ can click **Check again**. Follow any macOS prompt to quit and reopen the app. I
 rebuilt app still shows missing access, switch its permission off and on and reopen
 Nami. Recording shortcuts and audio import cannot bypass this setup.
 
-The sidebar contains **History**, **Playground**, **Settings**, **Shortcuts**, and
-**Models**, in that order, with an **About** icon at the bottom. Press **⌘1**–**⌘5**
-to open the matching page, or **⌘6** for About. **Permissions** lives inside **Settings**.
+The sidebar contains **History**, **Snippets**, **Actions**, **Playground**, **Settings**,
+**Shortcuts**, and **Models**, in that order, with an **About** icon at the bottom.
+Press **⌘1**–**⌘7** to open the matching page, or **⌘8** for About. **Permissions** lives inside **Settings**.
 The **Shortcuts** page contains all recording and pin-input shortcut controls, plus a
 reference for built-in app shortcuts. Click **Pin / unpin input** to assign or change
 its keys (default **⌃⌥P**). **Settings → Permissions** shows current Microphone, Input Monitoring,
@@ -113,7 +234,10 @@ you return to Nami. Revoking a required permission stops an active recording.
 2. Leave English and the configured WhisperKit model selected. **Local model**
    contains the model folder, engine, and optional evaluation reading prompts.
 3. Click **Start recording** or use your shortcut. Nami opens the microphone immediately,
-   independently of model loading. The **Listening** indicator confirms capture has started.
+   independently of model loading. The **Listening** indicator appears once sound actually
+   arrives. Bluetooth headsets such as AirPods need a second or two to switch to their
+   microphone; until then the indicator shows **Waiting for microphone…**, and if no sound
+   arrives within six seconds Nami asks you to choose another microphone.
    The model prepares automatically at launch once permissions are granted, and stays loaded
    while Nami is open. Transcription starts in the background after the first second of
    audio, once the model is ready. If you record before it is ready, audio is buffered
@@ -139,6 +263,9 @@ does not automatically copy or paste; use **Copy** when the updated text is read
 Choose a **Microphone** in **Settings** to remember that device across app restarts,
 or choose **System default** to follow macOS. If a saved microphone is disconnected,
 Nami keeps the choice and asks you to reconnect it or choose another input.
+When a recording cannot open the microphone (or no sound arrives), the floating
+indicator lists the connected microphones instead of closing. Pick one and recording
+starts with it; it also becomes your saved choice. Close the list with **×** or **Escape**.
 **Refresh microphones** updates the list after connecting a device.
 Recording settings save immediately and restore from `nami.json` under `studio`, with
 engine, language and model folder shared with the CLI.
@@ -180,11 +307,12 @@ A small floating capsule appears near the bottom of the display under your
 pointer, above the Dock, even while Nami is in the background or minimized.
 It briefly shows **Getting ready…** while the microphone opens, live microphone waves and
 a timer while **Listening**, then a **Transcribing…** spinner until the final
-text is ready (and copied/pasted, if enabled). It never takes keyboard focus and
-disappears after completion, failure, or cancellation. Keep Nami running to use
+text is ready (and copied/pasted, if enabled). While listening, click **×** in the
+capsule or press **Escape** in any app to cancel; the audio is kept in History. It
+never takes keyboard focus and disappears after completion, failure, or cancellation. Keep Nami running to use
 the global shortcuts.
 
-Open **Shortcuts** in the sidebar (**⌘4**), or click the shortcut beside the
+Open **Shortcuts** in the sidebar (**⌘6**), or click the shortcut beside the
 recording button in History. Use **History** in the sidebar or **Escape** to
 return to recording history. Click **Allow Input Monitoring…**, enable **Nami** in **System Settings →
 Privacy & Security → Input Monitoring**, and reopen Nami if macOS requests it.
@@ -200,7 +328,8 @@ or double-tap gestures. Mode and key assignments persist in macOS app preference
 
 Recording continues until you stop it with a shortcut. Background model preparation does not block recording shortcuts.
 Shortcuts do nothing while the microphone is opening, transcribing, or cancelling.
-Conventional shortcuts trigger once on release. Escape cancels when Nami is focused. Cancelled, failed, and empty
+Conventional shortcuts trigger once on release. While listening or choosing a microphone,
+Escape cancels from any app; otherwise it cancels when Nami is focused. Cancelled, failed, and empty
 transcriptions leave the clipboard unchanged. Successful recordings and audio
 imports replace it with the final text when **Copy when finished** is enabled (the default).
 Disable it in Settings to copy individual transcripts manually; this also disables automatic pasting.

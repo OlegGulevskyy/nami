@@ -5,8 +5,10 @@ import Testing
 @MainActor struct StudioSidebarTests {
     @Test func everyDestinationHasASequentialShortcutInSidebarOrder() {
         let pages = StudioView.Page.allCases
-        #expect(pages.map(\.shortcutKey) == Array("123456"))
-        #expect(pages[1] == .debugging)
+        #expect(pages.map(\.shortcutKey) == Array("12345678"))
+        #expect(pages[1] == .snippets)
+        #expect(pages[2] == .actions)
+        #expect(pages[3] == .debugging)
         #expect(pages.last == .about)
         for page in pages {
             #expect(NSImage(systemSymbolName: page.symbol, accessibilityDescription: nil) != nil)

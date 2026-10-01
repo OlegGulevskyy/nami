@@ -7,7 +7,8 @@ import UniformTypeIdentifiers
 public struct StudioView: View {
     @Bindable var session: StudioSession
     public enum Page: String, CaseIterable {
-        case history = "History", debugging = "Playground", settings = "Settings", shortcuts = "Shortcuts", model = "Models", about = "About"
+        case history = "History", snippets = "Snippets", actions = "Actions", debugging = "Playground", settings = "Settings"
+        case shortcuts = "Shortcuts", model = "Models", about = "About"
 
         var symbol: String {
             switch self {
@@ -15,6 +16,8 @@ public struct StudioView: View {
             case .settings: "slider.horizontal.3"
             case .shortcuts: "keyboard"
             case .model: "cpu"
+            case .snippets: "curlybraces"
+            case .actions: "bolt"
             case .about: "info.circle"
             case .debugging: "flask"
             }
@@ -24,17 +27,19 @@ public struct StudioView: View {
         var shortcutKey: Character {
             switch self {
             case .history: "1"
-            case .debugging: "2"
-            case .settings: "3"
-            case .shortcuts: "4"
-            case .model: "5"
-            case .about: "6"
+            case .snippets: "2"
+            case .actions: "3"
+            case .debugging: "4"
+            case .settings: "5"
+            case .shortcuts: "6"
+            case .model: "7"
+            case .about: "8"
             }
         }
 
         var settingsPage: StudioSettingsView.Page? {
             switch self {
-            case .history, .debugging: nil
+            case .history, .debugging, .snippets, .actions: nil
             case .settings: .general
             case .shortcuts: .shortcuts
             case .model: .model
@@ -142,6 +147,8 @@ public struct StudioView: View {
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
                 let neededSetup = session.permissions.needsSetup
                 session.refreshPermissions()
+                session.refreshSnippetsIfChanged()
+                session.refreshActionsIfChanged()
                 if neededSetup && !session.permissions.needsSetup { session.modifierShortcut.refresh() }
             }
         }
@@ -165,6 +172,10 @@ public struct StudioView: View {
     @ViewBuilder private func pageContent(_ item: Page) -> some View {
         if item == .debugging {
             InternalDebuggingView(session: session, lab: session.debugging)
+        } else if item == .snippets {
+            SnippetsView(session: session)
+        } else if item == .actions {
+            ActionsView(session: session)
         } else if let settingsPage = item.settingsPage {
             StudioSettingsView(session: session, page: settingsPage)
         } else {
@@ -455,10 +466,11 @@ public struct StudioView: View {
     private var recordingTitle: String {
         switch session.phase {
         case .idle: "Ready when you are"
-        case .recording: "Listening"
+        case .recording: session.awaitingMicrophone ? "Waiting for the microphone" : "Listening"
         case .preparing: "Getting ready"
         case .processing: "Finding your words"
         case .cancelling: "Cancelling recording"
+        case .choosingMicrophone: "Choose a microphone"
         case .failed: "Let’s try that again"
         }
     }
@@ -493,6 +505,13 @@ private struct RecordingHistoryRow: View {
 
     private var needsAttention: Bool { run.historyNotice?.needsAttention == true }
 
+    @ViewBuilder private var transcriptionTime: some View {
+        if let seconds = run.transcriptionSeconds {
+            Text("Transcribed in \(Int(seconds * 1000)) ms")
+                .help("Time from the end of the recording until the text was ready, before cleanup.")
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 24) {
@@ -509,10 +528,22 @@ private struct RecordingHistoryRow: View {
             .frame(minHeight: 24)
             RecordingHistoryText(run: run, transcriptFont: session.settings.transcriptFont.font)
                 .padding(.bottom, needsAttention ? 2 : 16)
-            if let result = run.cleanupResult {
+            if let name = run.actionName {
                 HStack(spacing: 12) {
-                    Text("\(CleanupEngine.title(for: result.provider)) · \(Int(result.elapsedSeconds * 1000)) ms · \(result.succeeded ? "Cleanup applied" : "Original kept")")
-                        .help(result.reason ?? "Original transcript is available below.")
+                    Label("Action · \(name)", systemImage: StudioView.Page.actions.symbol)
+                        .help("This recording ran the action instead of being pasted.")
+                    transcriptionTime
+                }.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+            } else if run.cleanupResult != nil || run.snippetName != nil {
+                HStack(spacing: 12) {
+                    transcriptionTime
+                    if let name = run.snippetName {
+                        Label("Snippet · \(name)", systemImage: StudioView.Page.snippets.symbol)
+                            .help("Your words were replaced by this snippet. What you said is available below.")
+                    } else if let result = run.cleanupResult {
+                        Text("\(CleanupEngine.title(for: result.provider)) · \(Int(result.elapsedSeconds * 1000)) ms · \(result.succeeded ? "Cleanup applied" : "Original kept")")
+                            .help(result.reason ?? "Original transcript is available below.")
+                    }
                     Spacer()
                     Button(showOriginal ? "Hide original" : "Show original") { showOriginal.toggle() }
                     Button("Copy original") { _ = session.copyOriginalTranscript(run) }
@@ -522,6 +553,8 @@ private struct RecordingHistoryRow: View {
                         .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14).background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 8))
                 }
+            } else if run.transcriptionSeconds != nil {
+                transcriptionTime.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
             }
             if !needsAttention { StudioStyle.divider }
         }
