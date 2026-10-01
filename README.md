@@ -220,9 +220,9 @@ can click **Check again**. Follow any macOS prompt to quit and reopen the app. I
 rebuilt app still shows missing access, switch its permission off and on and reopen
 Nami. Recording shortcuts and audio import cannot bypass this setup.
 
-The sidebar contains **History**, **Snippets**, **Actions**, **Playground**, **Settings**,
-**Shortcuts**, and **Models**, in that order, with an **About** icon at the bottom.
-Press **⌘1**–**⌘7** to open the matching page, or **⌘8** for About. **Permissions** lives inside **Settings**.
+The sidebar lists **History**, **Snippets**, and **Actions** at the top (**⌘1**–**⌘3**), with
+**Playground** (**⌘4**) and **Settings** (**⌘,**) at the bottom. Settings switches between
+**General**, **Shortcuts**, **Models**, and **About** with tabs in its header. **Permissions** lives inside **General**.
 The **Shortcuts** page contains all recording and pin-input shortcut controls, plus a
 reference for built-in app shortcuts. Click **Pin / unpin input** to assign or change
 its keys (default **⌃⌥P**). **Settings → Permissions** shows current Microphone, Input Monitoring,
@@ -312,7 +312,7 @@ capsule or press **Escape** in any app to cancel; the audio is kept in History. 
 never takes keyboard focus and disappears after completion, failure, or cancellation. Keep Nami running to use
 the global shortcuts.
 
-Open **Shortcuts** in the sidebar (**⌘6**), or click the shortcut beside the
+Open **Settings → Shortcuts** (**⌘,**), or click the shortcut beside the
 recording button in History. Use **History** in the sidebar or **Escape** to
 return to recording history. Click **Allow Input Monitoring…**, enable **Nami** in **System Settings →
 Privacy & Security → Input Monitoring**, and reopen Nami if macOS requests it.

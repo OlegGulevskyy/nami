@@ -376,8 +376,8 @@ public struct StudioSettingsView: View {
         }.disabled(session.phase.busy)
         section("In Nami") {
             shortcutHelp("Built-in shortcuts for the Nami window. These cannot be changed here.")
-            ForEach(StudioView.Page.allCases, id: \.self) { destination in
-                row("Show \(destination.rawValue)") { StudioKeycap(text: "⌘\(destination.shortcutKey)") }
+            ForEach(StudioView.Page.allCases.filter { $0.shortcutKey != nil }, id: \.self) { destination in
+                row("Show \(destination.rawValue)") { StudioKeycap(text: destination.shortcutLabel ?? "") }
             }
             row("Open Settings") { StudioKeycap(text: "⌘,") }
             row("Search transcripts", subtitle: "In History") { StudioKeycap(text: "⌘F") }

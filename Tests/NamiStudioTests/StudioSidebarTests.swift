@@ -3,14 +3,17 @@ import Testing
 @testable import NamiStudio
 
 @MainActor struct StudioSidebarTests {
-    @Test func everyDestinationHasASequentialShortcutInSidebarOrder() {
-        let pages = StudioView.Page.allCases
-        #expect(pages.map(\.shortcutKey) == Array("12345678"))
-        #expect(pages[1] == .snippets)
-        #expect(pages[2] == .actions)
-        #expect(pages[3] == .debugging)
-        #expect(pages.last == .about)
-        for page in pages {
+    @Test func sidebarListsMainPagesFirstAndKeepsSettingsSectionsInTabs() {
+        typealias Page = StudioView.Page
+        #expect(Page.primary == [.history, .snippets, .actions])
+        #expect(Page.secondary == [.debugging, .settings])
+        // Every page is reachable from the sidebar or the Settings tabs.
+        #expect(Set(Page.primary + Page.secondary + Page.settingsTabs) == Set(Page.allCases))
+        #expect(Page.settingsTabs.allSatisfy { $0.settingsPage != nil && $0.sidebarPage == .settings })
+        #expect((Page.primary + [.debugging]).map(\.shortcutKey) == Array("1234"))
+        #expect(Page.settingsTabs.allSatisfy { $0.shortcutKey == nil })
+        #expect(Page.settings.shortcutLabel == "⌘,")
+        for page in Page.allCases {
             #expect(NSImage(systemSymbolName: page.symbol, accessibilityDescription: nil) != nil)
         }
     }

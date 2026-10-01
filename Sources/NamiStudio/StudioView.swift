@@ -6,14 +6,14 @@ import UniformTypeIdentifiers
 
 public struct StudioView: View {
     @Bindable var session: StudioSession
-    public enum Page: String, CaseIterable {
+    public enum Page: String, CaseIterable, Sendable {
         case history = "History", snippets = "Snippets", actions = "Actions", debugging = "Playground", settings = "Settings"
         case shortcuts = "Shortcuts", model = "Models", about = "About"
 
         var symbol: String {
             switch self {
             case .history: "clock.arrow.circlepath"
-            case .settings: "slider.horizontal.3"
+            case .settings: "gearshape"
             case .shortcuts: "keyboard"
             case .model: "cpu"
             case .snippets: "curlybraces"
@@ -23,19 +23,32 @@ public struct StudioView: View {
             }
         }
 
+        /// The main destinations, at the top of the sidebar.
+        static let primary: [Page] = [.history, .snippets, .actions]
+        /// Tools and configuration, pinned to the bottom of the sidebar.
+        static let secondary: [Page] = [.debugging, .settings]
+        /// Sections of Settings, switched with tabs in its header.
+        static let settingsTabs: [Page] = [.settings, .shortcuts, .model, .about]
+
         /// Pressed with Command to switch pages from anywhere in the window.
-        var shortcutKey: Character {
+        /// Settings opens with the app menu's ⌘, instead.
+        var shortcutKey: Character? {
             switch self {
             case .history: "1"
             case .snippets: "2"
             case .actions: "3"
             case .debugging: "4"
-            case .settings: "5"
-            case .shortcuts: "6"
-            case .model: "7"
-            case .about: "8"
+            case .settings, .shortcuts, .model, .about: nil
             }
         }
+
+        var shortcutLabel: String? {
+            if self == .settings { return "⌘," }
+            return shortcutKey.map { "⌘\($0)" }
+        }
+
+        /// The sidebar entry that stays selected while this page shows.
+        var sidebarPage: Page { settingsPage == nil ? self : .settings }
 
         var settingsPage: StudioSettingsView.Page? {
             switch self {
@@ -59,6 +72,9 @@ public struct StudioView: View {
     @FocusState private var searchFocused: Bool
     @State private var floatingBarHeight = 0.0
     @State private var builtPages: Set<Page> = []
+    @State private var hoveredSidebarItem: Page?
+    /// Settings reopens on the tab last shown.
+    @State private var lastSettingsTab: Page = .settings
 
     public init(session: StudioSession, page: Binding<Page>) {
         self.session = session
@@ -125,7 +141,10 @@ public struct StudioView: View {
                             .zIndex(visible ? 1 : 0)
                     }
                 }
-                .onChange(of: page, initial: true) { builtPages.insert(page) }
+                .onChange(of: page, initial: true) {
+                    builtPages.insert(page)
+                    if page.settingsPage != nil { lastSettingsTab = page }
+                }
                 // A hidden page must not keep typing focus.
                 .onChange(of: page) { NSApp.keyWindow?.makeFirstResponder(nil) }
                 .task {
@@ -250,7 +269,7 @@ public struct StudioView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 0) {
                 if !sidebarCollapsed {
                     StudioLogo()
@@ -272,9 +291,9 @@ public struct StudioView: View {
                 .accessibilityLabel(sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")
             }
             .padding(.bottom, 14)
-            ForEach(Page.allCases.filter { $0 != .about }, id: \.self) { navigationItem($0) }
+            ForEach(Page.primary, id: \.self) { navigationItem($0) }
             Spacer(minLength: 12)
-            navigationItem(.about)
+            ForEach(Page.secondary, id: \.self) { navigationItem($0) }
         }
         .padding(.horizontal, 12).padding(.top, 64).padding(.bottom, 20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -298,35 +317,65 @@ public struct StudioView: View {
     }
 
     private func navigationItem(_ item: Page) -> some View {
-        let iconOnly = sidebarCollapsed || item == .about
-        return Button { page = item } label: {
+        let selected = page.sidebarPage == item
+        let hovered = hoveredSidebarItem == item
+        return Button { page = item == .settings ? lastSettingsTab : item } label: {
             HStack(spacing: 10) {
-                Image(systemName: item.symbol).font(.system(size: 16)).frame(width: 20)
-                if !iconOnly {
+                Image(systemName: item.symbol).font(.system(size: 15)).frame(width: 20)
+                if !sidebarCollapsed {
                     Text(item.rawValue).font(.system(size: 14, weight: .medium))
                         .lineLimit(1)
                     Spacer(minLength: 0)
-                    Text(verbatim: "⌘\(item.shortcutKey)").font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(StudioStyle.quiet.opacity(0.8))
-                        .accessibilityHidden(true)
+                    // Shown on hover only, so the list stays quiet.
+                    if hovered, let shortcut = item.shortcutLabel {
+                        Text(verbatim: shortcut).font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(StudioStyle.quiet.opacity(0.8))
+                            .accessibilityHidden(true)
+                    }
                 }
             }
-            .foregroundStyle(page == item ? StudioStyle.green : StudioStyle.quiet)
-            .padding(.horizontal, iconOnly ? 0 : 12)
-            .frame(maxWidth: item == .about ? nil : .infinity)
-            .frame(width: item == .about ? (sidebarCollapsed ? 40 : 44) : nil, height: 40)
-            .background(page == item ? StudioStyle.selection : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(selected ? StudioStyle.green : hovered ? StudioStyle.ink : StudioStyle.quiet)
+            .padding(.horizontal, sidebarCollapsed ? 0 : 10)
+            .frame(maxWidth: .infinity).frame(height: 36)
+            .background(selected ? StudioStyle.selection : hovered ? StudioStyle.soft.opacity(0.7) : .clear,
+                        in: RoundedRectangle(cornerRadius: 8))
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(.plain).accessibilityAddTraits(page == item ? .isSelected : [])
+        .buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+        .onHover { inside in
+            if inside { hoveredSidebarItem = item } else if hovered { hoveredSidebarItem = nil }
+        }
         .accessibilityLabel(item.rawValue)
-        .help("\(item.rawValue) (⌘\(String(item.shortcutKey)))")
-        .keyboardShortcut(KeyEquivalent(item.shortcutKey), modifiers: .command)
+        .help(item.shortcutLabel.map { "\(item.rawValue) (\($0))" } ?? item.rawValue)
+        .keyboardShortcut(item.shortcutKey.map { KeyboardShortcut(KeyEquivalent($0), modifiers: .command) })
+    }
+
+    private var settingsTabs: some View {
+        HStack(spacing: 2) {
+            ForEach(Page.settingsTabs, id: \.self) { tab in
+                let selected = page == tab
+                let title = tab.settingsPage?.rawValue ?? tab.rawValue
+                Button { page = tab } label: {
+                    Text(title).font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(selected ? StudioStyle.green : StudioStyle.quiet)
+                        .padding(.horizontal, 12).frame(height: 28)
+                        .background(selected ? StudioStyle.selection : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityLabel(title)
+            }
+        }
+        .padding(3)
+        .studioGlass(in: Capsule())
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Settings sections")
     }
 
     private var header: some View {
         HStack(spacing: 20) {
-            Text(page.rawValue).font(.system(size: 17, weight: .semibold))
+            Text(page.sidebarPage.rawValue).font(.system(size: 17, weight: .semibold))
+            if page.settingsPage != nil { settingsTabs }
             Spacer()
             if page == .history {
                 HStack(spacing: 8) {
