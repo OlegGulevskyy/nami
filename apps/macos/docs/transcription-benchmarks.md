@@ -69,7 +69,7 @@ cloud transcription fails, and every failed attempt remains visible.
 
 ## Agent commands
 
-Run from the checkout. Close the app before CLI writes and reopen it afterward;
+Run from `apps/macos`. Close the app before CLI writes and reopen it afterward;
 the store rejects writes from a stale process rather than overwriting another
 process's results. Reports can be read while the app is open.
 

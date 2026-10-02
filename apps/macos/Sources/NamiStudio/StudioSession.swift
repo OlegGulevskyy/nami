@@ -150,6 +150,11 @@ public final class StudioSession {
     @ObservationIgnored private let clipboardWriter: @MainActor (String) -> Bool
     @ObservationIgnored private let pastePreparer: @MainActor () -> PreparedTranscriptPaste
     @ObservationIgnored private let destinationPinner: @MainActor () async -> TranscriptPinAttempt
+    @ObservationIgnored private let selectionReading: SelectionReading
+    @ObservationIgnored private var highlightWatch: Task<Void, Never>?
+    @ObservationIgnored private var highlightTracker = HighlightTracker()
+    /// Words in the latest live preview, which places highlights in the speech.
+    @ObservationIgnored private var liveWords: Int?
     @ObservationIgnored private var pinning: Task<Void, Never>?
     @ObservationIgnored private var pinNoticeTask: Task<Void, Never>?
     @ObservationIgnored private var engine: (any TranscriptionEngine)?
@@ -176,6 +181,8 @@ public final class StudioSession {
                 // background test run can never disturb someone using the Mac.
                 pastePreparer: @escaping @MainActor () -> PreparedTranscriptPaste,
                 destinationPinner: @escaping @MainActor () async -> TranscriptPinAttempt = { .failed("Pinning is unavailable.") },
+                // Unavailable by default: the live reader copies in Google editors.
+                selectionReading: SelectionReading = .unavailable,
                 engineBuilder: (@MainActor (StudioSettings) throws -> any TranscriptionEngine)? = nil,
                 cleanupProcessors: [CleanupEngine: any TextProcessor] = [:],
                 modelDirectory: URL? = nil,
@@ -200,6 +207,7 @@ public final class StudioSession {
         self.permissions = permissions ?? StudioPermissions()
         self.pastePreparer = pastePreparer
         self.destinationPinner = destinationPinner
+        self.selectionReading = selectionReading
         self.engineBuilder = engineBuilder ?? { settings in
             var config = EngineConfiguration()
             guard let backend = EngineConfiguration.Backend(rawValue: settings.engine) else {
@@ -413,6 +421,7 @@ public final class StudioSession {
                 Self.startupLog.info("Microphone started after \(self.captureStartSeconds!, privacy: .public) seconds")
                 self.inputName = capture.inputDescription
                 self.phase = .recording
+                if options.quoteHighlights { self.watchHighlights(id) }
                 self.awaitingMicrophone = true
                 self.status = "Waiting for the microphone…"
                 if options.cleanupEnabled { self.cleanupService.prewarm(options.cleanupEngine) }
@@ -431,8 +440,13 @@ public final class StudioSession {
                     try self.check(id)
                     await engine.setPromptObserver(self.debugging.promptStore.observer(source: "Live dictation"))
                     let onPartial: (@Sendable (String) -> Void)?
-                    if let speculative {
-                        onPartial = { text in Task { @MainActor in speculative.offer(text) } }
+                    if speculative != nil || options.quoteHighlights {
+                        onPartial = { text in Task { @MainActor in
+                            if options.quoteHighlights, self.activeID == id {
+                                self.liveWords = text.split(whereSeparator: \.isWhitespace).count
+                            }
+                            speculative?.offer(text)
+                        } }
                     } else { onPartial = nil }
                     try await engine.startLive(sessionID: id, language: options.language == "auto" ? nil : options.language,
                                                vocabulary: options.vocabulary, onPartial: onPartial)
@@ -476,6 +490,10 @@ public final class StudioSession {
                     self.averageDB = stats.rmsDBFS
                 }
                 self.ticker?.cancel()
+                self.highlightWatch?.cancel()
+                if options.quoteHighlights { self.selectionReading.end() }
+                self.highlightTracker.finish(seconds: stats.duration)
+                let highlights = options.quoteHighlights ? self.highlightTracker.highlights : []
                 self.awaitingMicrophone = false
                 speculative?.recordingEnded()
                 liveAudio.continuation.finish()
@@ -507,7 +525,7 @@ public final class StudioSession {
                 try await self.complete(id: id, date: date, text: text, samples: samples, statistics: stats,
                               latency: Self.seconds(since: stop), input: self.inputName,
                               options: options, prompt: prompt, paste: paste, allowsPin: true, runsActions: true,
-                              speculative: speculative)
+                              speculative: speculative, highlights: highlights)
                 await speculative?.cancel()
             } catch {
                 await speculative?.cancel()
@@ -640,6 +658,21 @@ public final class StudioSession {
                 await self.failed(error, id: id)
             }
             self.cleanup(id)
+        }
+    }
+
+    /// Polls the frontmost app's selection while recording. Reading never changes it.
+    private func watchHighlights(_ id: UUID) {
+        highlightTracker = HighlightTracker()
+        selectionReading.begin()
+        highlightWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.activeID == id, self.phase == .recording else { return }
+                let selection = await self.selectionReading.read()
+                guard !Task.isCancelled, self.activeID == id, self.phase == .recording else { return }
+                self.highlightTracker.observe(selection, spokenWords: self.liveWords, seconds: self.capturedSeconds)
+                try? await Task.sleep(for: .milliseconds(250))
+            }
         }
     }
 
@@ -787,6 +820,7 @@ public final class StudioSession {
         captureStartSeconds = nil; firstAudioSeconds = nil
         meterHistory = Array(repeating: 0, count: 64)
         let id = id ?? UUID(); activeID = id; stoppedAt = nil
+        liveWords = nil
         return id
     }
 
@@ -894,7 +928,8 @@ public final class StudioSession {
     private func complete(id: UUID, date: Date, text: String, samples: [Float], statistics: AudioStatistics,
                           latency: Double, input: String, options: StudioSettings, prompt: String,
                           paste: PreparedTranscriptPaste? = nil, allowsPin: Bool = false, runsActions: Bool = false,
-                          replacing previous: RecordingRun? = nil, speculative: SpeculativeCleanup? = nil) async throws {
+                          replacing previous: RecordingRun? = nil, speculative: SpeculativeCleanup? = nil,
+                          highlights: [CapturedHighlight] = []) async throws {
         let started = ContinuousClock.now
         // Only live dictation runs actions; imports and retries just transcribe.
         refreshActionsIfChanged()
@@ -934,6 +969,12 @@ public final class StudioSession {
             isCleaningUp = false
         }
         try check(id)
+        var quoting: HighlightQuotes.Result?
+        if snippet == nil, !highlights.isEmpty {
+            let result = HighlightQuotes.apply(highlights, spoken: original, edited: text, audioSeconds: statistics.duration)
+            quoting = result
+            text = result.text
+        }
         if let previous {
             // Replace metadata only after the entire retry succeeds. A failed save
             // leaves the old transcript in memory and on disk, and audio is immutable.
@@ -963,8 +1004,13 @@ public final class StudioSession {
             isPasting = true
             status = await destination.insert(text).status(app: destination.appName, copied: copied)
         } else {
-            let copied = options.copyWhenFinished && copyToClipboard(text)
-            if let paste {
+            // Pasting replaces the selection, which may be a highlight in the same field.
+            let keepsHighlight = paste != nil && quoting != nil ? await highlightStillSelected(highlights) : false
+            let copied = (options.copyWhenFinished || keepsHighlight) && copyToClipboard(text)
+            if keepsHighlight {
+                status = copied ? "Transcript copied. Paste skipped so your highlighted text isn’t replaced."
+                    : "Paste skipped so your highlighted text isn’t replaced. Copy it from your history."
+            } else if let paste {
                 isPasting = true
                 status = await paste(text, !copied).status(copied: copied)
             } else if copied {
@@ -974,11 +1020,29 @@ public final class StudioSession {
             }
         }
         if let processing, !processing.succeeded { status += " Cleanup skipped; original text kept." }
+        if let quoting { status += Self.quotingStatus(quoting) }
         if let snippet { status += " Used snippet “\(snippet.snippet.title)”." }
         else if snippets.mentionsTrigger(original) { status += " No snippet matched, so your words were kept as said." }
         isPasting = false
         // Keep the indicator processing until publication and the paste handoff finish.
         phase = .idle
+    }
+
+    private func highlightStillSelected(_ highlights: [CapturedHighlight]) async -> Bool {
+        guard let current = await selectionReading.read()?.trimmingCharacters(in: .whitespacesAndNewlines), !current.isEmpty
+        else { return false }
+        return highlights.contains { $0.text == current }
+    }
+
+    static func quotingStatus(_ result: HighlightQuotes.Result) -> String {
+        func count(_ n: Int) -> String { n == 1 ? "1 highlight" : "\(n) highlights" }
+        var parts: [String] = []
+        if result.quoted > 0 { parts.append("Quoted \(count(result.quoted)).") }
+        if result.unmatched > 0 {
+            parts.append("\(count(result.unmatched)) had no “this” or “that” nearby, so \(result.unmatched == 1 ? "it was" : "they were") left out.")
+        }
+        if result.usedOriginal { parts.append("Cleanup reworded them, so your original wording was kept.") }
+        return parts.isEmpty ? "" : " " + parts.joined(separator: " ")
     }
 
     private func failed(_ error: Error, id: UUID) async {
@@ -998,6 +1062,8 @@ public final class StudioSession {
     private func cleanup(_ id: UUID) {
         guard activeID == id else { return }
         activeID = nil; operation = nil; ticker?.cancel(); ticker = nil; level = 0; isCleaningUp = false; isPasting = false
+        if highlightWatch != nil { selectionReading.end() }
+        highlightWatch?.cancel(); highlightWatch = nil
         awaitingMicrophone = false
         retranscribingRunID = nil
         if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }

@@ -39,6 +39,7 @@ struct NamiApp: App {
         let session = StudioSession(project: project, historyDirectory: previewHistory,
                                     permissions: previewPermissions, pastePreparer: StudioSession.systemPastePreparer,
                                     destinationPinner: StudioSession.systemDestinationPinner,
+                                    selectionReading: snapshot ? .unavailable : .system(),
                                     captureBuilder: StudioSession.systemCapture,
                                     inputVolumeControl: snapshot ? InputVolumeControl(read: { _ in 0.6 }, write: { _, _ in }) : .system,
                                     actionRunner: { step in if !snapshot { try await StudioSession.systemActionRunner(step) } },

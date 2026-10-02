@@ -19,7 +19,7 @@ or prerelease suffixes. Never move or reuse a published version tag.
 
 ## One-time GitHub setup
 
-Workflow: `.github/workflows/release.yml` in `OlegGulevskyy/nami`.
+Workflow: `.github/workflows/macos.yml` in `OlegGulevskyy/nami`.
 It runs on GitHub's standard Apple Silicon `macos-26` runner, using Xcode 26.2.
 Pull requests run tests and an ad-hoc build without importing signing secrets.
 Stable release publication runs the signing and upload steps.

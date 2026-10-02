@@ -1,0 +1,60 @@
+name: Nami server
+
+on:
+  pull_request:
+    paths:
+      - apps/server/**
+      - .github/workflows/server.yml
+  push:
+    branches: [master]
+    paths:
+      - apps/server/**
+      - .github/workflows/server.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/server
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/server/uv.lock
+      - name: Install
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check .
+      - name: Test
+        # Fake engines only: no models, GPU, or network.
+        run: uv run pytest
+
+  mlx:
+    # Proves the locked Apple Silicon backend installs and imports. Hosted runners have no usable GPU for inference.
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/server/uv.lock
+      - name: Install MLX backend
+        run: uv sync --locked --extra mlx
+      - name: Import engines
+        run: uv run python -c "import mlx_lm, parakeet_mlx, parakeet_mlx.alignment, parakeet_mlx.audio; import nami_server.engines.mlx"
