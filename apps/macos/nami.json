@@ -4,7 +4,7 @@
   "modelFolder" : "/Users/oleggulevskyy/Library/Application Support/Nami/Models/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB",
   "studio" : {
     "appearance" : "system",
-    "audioDirectory" : "/Users/oleggulevskyy/Documents/dev/nami/evaluation/audio",
+    "audioDirectory" : "evaluation/audio",
     "cleanupEnabled" : true,
     "cleanupEngine" : "qwen4",
     "cleanupTimeoutSeconds" : 10,
