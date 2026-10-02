@@ -20,11 +20,13 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var microphoneUID: String?
     /// Where agent skills are installed; empty means Claude Code's `~/.claude/skills`.
     public var skillsFolder = ""
+    /// While recording, text highlighted in other apps replaces the "this" or "that" said about it.
+    public var quoteHighlights = false
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case engine, modelFolder, language, vocabulary, transcriptFont, appearance, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID, skillsFolder
-        case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory
+        case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory, quoteHighlights
     }
 
     public init(from decoder: Decoder) throws {
@@ -48,6 +50,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         audioDirectory = try values.decodeIfPresent(String.self, forKey: .audioDirectory) ?? ""
         microphoneUID = try values.decodeIfPresent(String.self, forKey: .microphoneUID)
         skillsFolder = try values.decodeIfPresent(String.self, forKey: .skillsFolder) ?? ""
+        quoteHighlights = try values.decodeIfPresent(Bool.self, forKey: .quoteHighlights) ?? false
     }
 
     public static func load(project: URL) throws -> Self {

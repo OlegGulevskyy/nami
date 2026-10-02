@@ -132,6 +132,10 @@ public struct StudioSettingsView: View {
                 Toggle("Paste automatically", isOn: $session.settings.pasteWhenFinished)
                     .labelsHidden().toggleStyle(StudioToggleStyle())
             }
+            row("Quote highlighted text", subtitle: "Highlight text in any app while you talk. The “this” or “that” you say about it becomes that text in quotes. In Google Docs, Nami copies the selection, then restores your clipboard. Needs Accessibility.") {
+                Toggle("Quote highlighted text", isOn: $session.settings.quoteHighlights)
+                    .labelsHidden().toggleStyle(StudioToggleStyle())
+            }
             if session.settings.pasteWhenFinished {
                 row("Accessibility", subtitle: session.permissions.accessibility
                     ? "Ready to paste into the focused app."

@@ -1831,3 +1831,45 @@ private func projectDirectory() throws -> URL {
     damaged.actions.actions = session.actions.actions
     #expect(try String(contentsOf: url, encoding: .utf8) == "not json")
 }
+
+@Test @MainActor func highlightsDuringARecordingAreQuotedWithoutReplacingTheSelection() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let engine = TestEngine(), capture = TestCapture()
+    engine.transcript = "Can you rephrase this?"
+    var copies: [String] = [], pastes: [String] = [], selection: String?, reads = 0
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { text, _ in pastes.append(text); return .sent } },
+        selectionReading: SelectionReading(read: { reads += 1; return selection }),
+        engineBuilder: { _ in engine }, captureBuilder: { _ in capture },
+        clipboardWriter: { copies.append($0); return true })
+    session.settings.copyWhenFinished = false
+    session.settings.quoteHighlights = true
+    func record(keepingSelection: Bool) async throws {
+        session.startRecording()
+        try await waitUntil { session.phase == .recording }
+        capture.emit(seconds: 0.1)
+        try await waitUntil { session.capturedSeconds >= 0.1 }
+        selection = " Hello world\n"
+        let seen = reads
+        try await waitUntil { reads >= seen + 3 }
+        if !keepingSelection { selection = nil }
+        session.stopRecording()
+        try await waitUntil { !session.phase.busy }
+    }
+    let quoted = "Can you rephrase \"Hello world\"?"
+    try await record(keepingSelection: false)
+    #expect(session.runs.first?.transcript == quoted)
+    #expect(pastes == [quoted] && copies.isEmpty)
+    #expect(session.status.hasSuffix("Quoted 1 highlight."))
+    // Pasting would overwrite text that is still highlighted, so it is copied instead.
+    try await record(keepingSelection: true)
+    #expect(pastes == [quoted] && copies == [quoted])
+    #expect(session.status.hasPrefix("Transcript copied. Paste skipped"))
+}
+
+@Test @MainActor func onlyGoogleEditorWindowsAreCopiedFrom() {
+    #expect(HighlightReader.isGoogleEditor("Launch plan - Google Docs"))
+    #expect(HighlightReader.isGoogleEditor("Budget - Google Sheets - Work"))
+    #expect(!HighlightReader.isGoogleEditor("Google Docs"))
+    #expect(!HighlightReader.isGoogleEditor("Slack | general"))
+}
