@@ -12,9 +12,13 @@ struct ModelsView: View {
     @State private var search = ""
     @State private var fastInstalled = FastTranscriptionEngine.installed
     @State private var fastDownload: Task<Void, Never>?
+    @State private var serverAddress = ""
+    @State private var serverCheck: ServerCheck?
+    @State private var serverChecking: Task<Void, Never>?
     @Environment(\.studioPageVisible) private var visible
     private var service: CleanupService { session.cleanupService }
     private var locked: Bool { session.busyForUpdate }
+    private enum ServerCheck { case connected(String), failed(String) }
     private enum Deletion: Identifiable {
         case whisper(TranscriptionModel), qwen(QwenModel), fast
         var id: String {
@@ -56,6 +60,10 @@ struct ModelsView: View {
                     HStack { ProgressView().controlSize(.small); Text("Removing model…") }
                 }
                 VStack(alignment: .leading, spacing: 16) {
+                    StudioSectionHeader(title: "Server")
+                    serverRow
+                }
+                VStack(alignment: .leading, spacing: 16) {
                     HStack(spacing: 12) {
                         StudioSectionHeader(title: "Transcription")
                         Button("Add folder…", action: chooseFolder).disabled(locked)
@@ -84,7 +92,10 @@ struct ModelsView: View {
                 }
             }.padding(28).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
         }
-        .onStudioPageVisibility(appear: { session.refreshModels(); fastInstalled = FastTranscriptionEngine.installed })
+        .onStudioPageVisibility(appear: {
+            session.refreshModels(); fastInstalled = FastTranscriptionEngine.installed
+            serverAddress = session.settings.serverURL
+        })
         // While hidden, showing the page refreshes instead.
         .onChange(of: session.debugging.isBusy) { if visible && !session.debugging.isBusy { session.refreshModels() } }
         .onChange(of: session.settings.modelFolder) { if visible { session.refreshModels() } }
@@ -137,6 +148,82 @@ struct ModelsView: View {
             }
         }.padding(18).background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
+    }
+
+    private var serverRow: some View {
+        let dictation = session.settings.engine == "server"
+        let cleanup = session.settings.cleanupEnabled && session.settings.cleanupEngine == .server
+        let edited = serverAddress != session.settings.serverURL
+        let usable = session.serverEndpoint != nil && !edited
+        let uses = [dictation ? "dictation" : nil, cleanup ? "cleanup" : nil].compactMap { $0 }
+        var connected = false
+        if case .connected = serverCheck { connected = true }
+        let state = (connected ? "Connected" : session.serverEndpoint == nil ? "Not set up" : "Not checked")
+            + (uses.isEmpty ? "" : " · used for " + uses.joined(separator: " and "))
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Nami server").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                stateLabel(state, ready: connected)
+            }
+            Text("Transcribe and clean up on another Mac on your network instead of downloading models here. Start one with make server-lan. Your audio and text are sent to that Mac.")
+                .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet).fixedSize(horizontal: false, vertical: true)
+            TextField("Address, like http://192.168.1.24:8765", text: $serverAddress)
+                .textFieldStyle(.roundedBorder).onSubmit(connectServer).accessibilityLabel("Server address")
+                .font(.system(size: 13))
+            HStack(spacing: 12) {
+                Button(edited ? "Save and connect" : "Check connection", action: connectServer)
+                    .disabled(locked || serverChecking != nil || (NamiServerEndpoint(address: serverAddress) == nil && !serverAddress.isEmpty)
+                              || (serverAddress.isEmpty && !edited))
+                if serverChecking != nil { ProgressView().controlSize(.small) }
+                Spacer()
+                Button(dictation ? "Used for dictation" : "Use for dictation") { session.settings.engine = "server" }
+                    .disabled(locked || dictation || !usable)
+                Button(cleanup ? "Used for cleanup" : "Use for cleanup") {
+                    var updated = session.settings
+                    updated.cleanupEngine = .server
+                    updated.cleanupEnabled = true
+                    // A round trip to the server's 4B model takes over a second.
+                    updated.cleanupTimeoutSeconds = max(5, updated.cleanupTimeoutSeconds)
+                    session.settings = updated
+                }.disabled(locked || cleanup || !usable)
+            }.font(.system(size: 12))
+            switch serverCheck {
+            case .connected(let summary):
+                Text(summary).font(.system(size: 12)).foregroundStyle(StudioStyle.quiet).textSelection(.enabled)
+            case .failed(let message):
+                Text(message).font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled)
+            case nil: EmptyView()
+            }
+            if !uses.isEmpty {
+                Text("To use this Mac's models again, choose one below. Cleanup waits up to \(Int(session.settings.cleanupTimeoutSeconds)) seconds before keeping the original text.")
+                    .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet).fixedSize(horizontal: false, vertical: true)
+            }
+        }.padding(18).background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(StudioStyle.line))
+    }
+
+    /// Saves the address, then checks that the server answers.
+    private func connectServer() {
+        let address = serverAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard serverChecking == nil, address.isEmpty || NamiServerEndpoint(address: address) != nil else { return }
+        session.settings.serverURL = address
+        serverAddress = address
+        serverCheck = nil
+        guard let endpoint = NamiServerEndpoint(address: address) else { return }
+        serverChecking = Task {
+            defer { serverChecking = nil }
+            do {
+                let models = try await NamiServerClient(endpoint: endpoint).models()
+                func names(_ kind: String) -> String {
+                    let found = models.filter { $0.kind == kind }
+                    guard !found.isEmpty else { return "none" }
+                    return found.map { $0.id + ($0.loaded == false ? " (loading)" : "") }.joined(separator: ", ")
+                }
+                serverCheck = .connected("\(endpoint.displayName) · transcription: \(names("transcription")) · cleanup: \(names("chat"))")
+            } catch is CancellationError {
+            } catch { serverCheck = .failed(error.localizedDescription) }
+        }
     }
 
     private func whisperRow(_ model: TranscriptionModel) -> some View {

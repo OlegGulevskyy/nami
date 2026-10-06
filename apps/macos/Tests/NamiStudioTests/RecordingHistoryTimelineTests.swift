@@ -54,6 +54,41 @@ import Vision
         }
     }
 
+    /// The pinned date and the hovered row come from frames in the content's own
+    /// coordinates plus the content's offset, never from rows observing the scroll.
+    @Test func layoutFindsTopDayAndHoveredRowFromContentFrames() {
+        let calendar = Calendar(identifier: .gregorian)
+        let newer = calendar.date(from: DateComponents(year: 2026, month: 1, day: 2))!
+        let older = calendar.date(from: DateComponents(year: 2026, month: 1, day: 1))!
+        let ids = (0..<4).map { _ in UUID() }
+        let layout = HistoryLayout()
+        // 100-point rows; the older day starts after its 18-point gap.
+        for (index, (day, y)) in [(newer, 0.0), (newer, 100), (older, 218), (older, 318)].enumerated() {
+            layout.rows[ids[index]] = .init(day: day, frame: CGRect(x: 0, y: y, width: 500, height: 100))
+        }
+        layout.shown = Set(ids)
+
+        #expect(layout.topDay == newer)
+        layout.contentTop = -150
+        #expect(layout.topDay == newer)
+        // The gap above a day belongs to that day.
+        layout.contentTop = -205
+        #expect(layout.topDay == older)
+
+        #expect(layout.hoveredRow == nil)
+        layout.pointer = CGPoint(x: 10, y: 20)
+        #expect(layout.hoveredRow == ids[2])
+        // Rows scrolling under a pointer that stays put.
+        layout.contentTop = -310
+        #expect(layout.hoveredRow == ids[3])
+        // A row the lazy stack let go of no longer counts, even though its frame is kept.
+        layout.shown.remove(ids[3])
+        #expect(layout.hoveredRow == nil)
+        layout.shown.insert(ids[3])
+        layout.pointer = nil
+        #expect(layout.hoveredRow == nil)
+    }
+
     @Test func groupsPreserveNewestFirstOrderByDay() {
         let calendar = Calendar(identifier: .gregorian)
         let day = { (d: Int, h: Int) in calendar.date(from: DateComponents(year: 2026, month: 1, day: d, hour: h))! }

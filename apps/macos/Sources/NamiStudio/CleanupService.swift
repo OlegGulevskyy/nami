@@ -15,15 +15,20 @@ final class CleanupService {
     var managingModels: Bool { downloading || removingEngine != nil }
     var promptStore: PromptStore?
     let modelsRoot: URL
+    let serverConnection: NamiServerConnection
     @ObservationIgnored private let processors: [CleanupEngine: any TextProcessor]
     @ObservationIgnored private let runners: [CleanupEngine: CleanupRunner]
     @ObservationIgnored private let injected: Set<CleanupEngine>
     @ObservationIgnored private var downloadTask: Task<Void, Never>?
     @ObservationIgnored private var warmTask: Task<Void, Never>?
 
-    init(processors overrides: [CleanupEngine: any TextProcessor] = [:], modelsRoot: URL = QwenModelAssets.root) {
+    init(processors overrides: [CleanupEngine: any TextProcessor] = [:], modelsRoot: URL = QwenModelAssets.root,
+         serverConnection: NamiServerConnection = .init()) {
         self.modelsRoot = modelsRoot
-        var processors: [CleanupEngine: any TextProcessor] = [.vocabulary: VocabularyTextProcessor()]
+        self.serverConnection = serverConnection
+        var processors: [CleanupEngine: any TextProcessor] = [
+            .vocabulary: VocabularyTextProcessor(), .server: ServerTextProcessor(connection: serverConnection),
+        ]
         for model in QwenModel.allCases {
             processors[model.engine] = QwenTextProcessor(model: model, directory: QwenModelAssets.directory(for: model, root: modelsRoot))
         }

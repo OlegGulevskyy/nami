@@ -73,6 +73,7 @@ public struct StudioView: View {
     @State private var floatingBarHeight = 0.0
     @State private var builtPages: Set<Page> = []
     @State private var hoveredSidebarItem: Page?
+    @State private var runPendingDeletion: RecordingRun.ID?
     /// Settings reopens on the tab last shown.
     @State private var lastSettingsTab: Page = .settings
 
@@ -380,7 +381,7 @@ public struct StudioView: View {
             if page == .history {
                 HStack(spacing: 8) {
                     Circle().fill(StudioStyle.green.opacity(0.75)).frame(width: 6, height: 6)
-                    Text(session.settings.engine == "fake" ? "Demo mode" : "On-device")
+                    Text(session.settings.engine == "fake" ? "Demo mode" : session.settings.engine == "server" ? "Nami server" : "On-device")
                         .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
                 }
                 Button {
@@ -421,10 +422,19 @@ public struct StudioView: View {
                     .padding(.bottom, floatingBarHeight)
             } else {
                 RecordingHistoryTimeline(runs: filteredRuns) { run in
-                    RecordingHistoryRow(session: session, run: run)
+                    RecordingHistoryRow(session: session, run: run, pendingDeletion: $runPendingDeletion)
                 }
                 .id(query)
             }
+        }
+        // One dialog for the page: a dialog per row was re-resolved for every row
+        // whenever the page updated, including on every scrolled frame.
+        .confirmationDialog("Delete this recording?", isPresented: Binding(
+            get: { runPendingDeletion != nil }, set: { if !$0 { runPendingDeletion = nil } }
+        ), titleVisibility: .visible, presenting: runPendingDeletion) { id in
+            Button("Delete", role: .destructive) { session.deleteRun(id) }
+        } message: { _ in
+            Text("The transcript and its audio will be removed from history. This can’t be undone.")
         }
     }
 
@@ -547,10 +557,12 @@ public struct StudioView: View {
 private struct RecordingHistoryRow: View {
     @Bindable var session: StudioSession
     let run: RecordingRun
+    @Binding var pendingDeletion: RecordingRun.ID?
+    @Environment(\.historyRowHovered) private var hovered
     @State private var copied = false
-    @State private var hovered = false
-    @State private var confirmDelete = false
     @State private var showOriginal = false
+
+    private var confirmDelete: Bool { pendingDeletion == run.id }
 
     private var needsAttention: Bool { run.historyNotice?.needsAttention == true }
 
@@ -617,7 +629,7 @@ private struct RecordingHistoryRow: View {
             }
         }
         .padding(.bottom, needsAttention ? 10 : 0)
-        .contentShape(Rectangle()).onHover { hovered = $0 }
+        .contentShape(Rectangle())
         .contextMenu {
             Button("Copy transcript") {
                 if session.selectedRunID != run.id { session.stopPlayback() }
@@ -632,13 +644,8 @@ private struct RecordingHistoryRow: View {
                 Button("Show audio in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
             Divider()
-            Button("Delete recording…", role: .destructive) { confirmDelete = true }
+            Button("Delete recording…", role: .destructive) { pendingDeletion = run.id }
                 .disabled(session.retranscribingRunID == run.id)
-        }
-        .confirmationDialog("Delete this recording?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { session.deleteRun(run.id) }
-        } message: {
-            Text("The transcript and its audio will be removed from history. This can’t be undone.")
         }
         .task(id: copied) {
             guard copied else { return }
@@ -687,7 +694,7 @@ private struct RecordingHistoryRow: View {
                     .frame(width: 1, height: 14)
                     .padding(.horizontal, 4)
                     .accessibilityHidden(true)
-                Button { confirmDelete = true } label: { Image(systemName: "trash") }
+                Button { pendingDeletion = run.id } label: { Image(systemName: "trash") }
                     .buttonStyle(.plain).frame(width: 24, height: 24)
                     .disabled(session.retranscribingRunID == run.id)
                     .accessibilityLabel("Delete recording")

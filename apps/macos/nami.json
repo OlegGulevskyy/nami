@@ -4,7 +4,7 @@
   "modelFolder" : "/Users/oleggulevskyy/Library/Application Support/Nami/Models/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB",
   "studio" : {
     "appearance" : "system",
-    "audioDirectory" : "evaluation/audio",
+    "audioDirectory" : "/Users/oleggulevskyy/Documents/dev/nami/apps/macos/evaluation/audio",
     "cleanupEnabled" : true,
     "cleanupEngine" : "qwen4",
     "cleanupTimeoutSeconds" : 10,
@@ -17,8 +17,9 @@
     "pasteWhenFinished" : true,
     "quoteHighlights" : true,
     "saveAudio" : false,
+    "serverURL" : "http://192.168.1.24:8765",
     "skillsFolder" : "",
     "transcriptFont" : "avenirNext",
-    "vocabulary" : "GPT for Sheets, GPT for Excel, Posthog, Theoria, Users API"
+    "vocabulary" : "GPT for Sheets, GPT for Excel, Posthog, Theoria, Users API, changeset"
   }
 }

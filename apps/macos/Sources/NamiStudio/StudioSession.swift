@@ -77,6 +77,7 @@ public final class StudioSession {
             if settings != oldValue { settingsChanged() }
         }
     }
+    var serverEndpoint: NamiServerEndpoint? { NamiServerEndpoint(address: settings.serverURL) }
     public let project: URL
     public private(set) var phase: StudioPhase = .idle
     public private(set) var isCleaningUp = false
@@ -200,8 +201,10 @@ public final class StudioSession {
         self.actionRunner = actionRunner
         let debuggingDirectory = historyDirectory?.appendingPathComponent("InternalDebugging")
             ?? RecordingHistoryStore.defaultDirectory.deletingLastPathComponent().appendingPathComponent("InternalDebugging")
+        let serverConnection = NamiServerConnection()
         self.debugging = DebuggingSession(directory: debuggingDirectory,
-            cleanupService: CleanupService(processors: cleanupProcessors, modelsRoot: modelDirectory ?? QwenModelAssets.root),
+            cleanupService: CleanupService(processors: cleanupProcessors, modelsRoot: modelDirectory ?? QwenModelAssets.root,
+                                           serverConnection: serverConnection),
             apiKeyStore: CommandLine.arguments.contains("--snapshot") ? nil
                 : .keychain(account: debuggingDirectory.standardizedFileURL.path))
         self.permissions = permissions ?? StudioPermissions()
@@ -209,6 +212,12 @@ public final class StudioSession {
         self.destinationPinner = destinationPinner
         self.selectionReading = selectionReading
         self.engineBuilder = engineBuilder ?? { settings in
+            if settings.engine == "server" {
+                guard let endpoint = serverConnection.endpoint else {
+                    throw StudioError.message("Enter your Nami server's address in Models.")
+                }
+                return ServerTranscriptionEngine(client: NamiServerClient(endpoint: endpoint))
+            }
             var config = EngineConfiguration()
             guard let backend = EngineConfiguration.Backend(rawValue: settings.engine) else {
                 throw StudioError.message("Choose fast dictation, WhisperKit, or the demo engine.")
@@ -227,6 +236,7 @@ public final class StudioSession {
             settings = try StudioSettings.load(project: project)
         }
         catch { settings = StudioSettings(); errorMessage = error.localizedDescription }
+        serverConnection.endpoint = serverEndpoint
         let promptURL = project.appendingPathComponent("evaluation/samples.template.json")
         if let data = try? Data(contentsOf: promptURL) {
             prompts = (try? JSONDecoder().decode([ReadingPrompt].self, from: data)) ?? []
@@ -302,7 +312,14 @@ public final class StudioSession {
     public var selectedRun: RecordingRun? { runs.first { $0.id == selectedRunID } ?? runs.first }
     public var selectedPrompt: ReadingPrompt? { prompts.first { $0.id == selectedPromptID } }
     public var modelName: String {
-        settings.engine == "fake" ? "Demo engine" : settings.engine == "fast" ? "Parakeet Ultra · Whisper verification" : (settings.modelFolder.isEmpty ? "Choose a model folder" : URL(fileURLWithPath: settings.modelFolder).lastPathComponent)
+        settings.engine == "fake" ? "Demo engine" : settings.modelFolder.isEmpty && !["fast", "server"].contains(settings.engine) ? "Choose a model folder" : modelLabel(settings)
+    }
+    private func modelLabel(_ options: StudioSettings) -> String {
+        switch options.engine {
+        case "fast": "Parakeet Ultra · Whisper verification"
+        case "server": "Nami server · " + (NamiServerEndpoint(address: options.serverURL)?.displayName ?? "no address")
+        default: URL(fileURLWithPath: options.modelFolder).lastPathComponent
+        }
     }
     public var selectedMicrophoneUnavailable: Bool {
         guard let uid = settings.microphoneUID else { return false }
@@ -351,7 +368,7 @@ public final class StudioSession {
 
     private func prepareInBackground() {
         guard !modelMaintenance else { return }
-        guard settings.engine == "fake" || !settings.modelFolder.isEmpty else { return }
+        guard ["fake", "server"].contains(settings.engine) || !settings.modelFolder.isEmpty else { return }
         do { _ = try preparationFor(settings) }
         catch { modelPreparationError = error.localizedDescription }
     }
@@ -369,6 +386,8 @@ public final class StudioSession {
     }
 
     private func settingsChanged() {
+        // Before any engine rebuild below reads it.
+        cleanupService.serverConnection.endpoint = serverEndpoint
         if settings.cleanupEnabled { cleanupService.prewarm(settings.cleanupEngine) }
         if !phase.busy {
             if engineKey != key(settings) {
@@ -881,7 +900,7 @@ public final class StudioSession {
         let run = RecordingRun(id: id, date: date, transcript: text, audioSeconds: statistics.duration,
             latency: latency, averageDB: statistics.rmsDBFS, peakDB: statistics.peakDBFS,
             input: input, savedURL: nil, engine: options.engine,
-            model: options.engine == "fast" ? "Parakeet Ultra · Whisper verification" : URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: prompt,
+            model: modelLabel(options), prompt: prompt,
             samples: samples, outcome: outcome, rawTranscript: rawText, cleanupResult: cleanupResult, snippetName: snippetName,
             actionName: actionName, transcriptionSeconds: transcriptionSeconds)
         do { return try historyStore.save(run) }
@@ -982,7 +1001,7 @@ public final class StudioSession {
                 audioSeconds: previous.audioSeconds, latency: latency + Self.seconds(since: started),
                 averageDB: previous.averageDB, peakDB: previous.peakDB, input: previous.input,
                 savedURL: previous.savedURL, engine: options.engine,
-                model: options.engine == "fast" ? "Parakeet Ultra · Whisper verification" : URL(fileURLWithPath: options.modelFolder).lastPathComponent, prompt: previous.prompt,
+                model: modelLabel(options), prompt: previous.prompt,
                 samples: samples, outcome: .completed, rawTranscript: options.cleanupEnabled || snippet != nil ? original : nil,
                 cleanupResult: processing, snippetName: snippet?.snippet.title, transcriptionSeconds: latency)
             let stored = try historyStore.save(run)
@@ -1068,7 +1087,10 @@ public final class StudioSession {
         retranscribingRunID = nil
         if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }
     }
-    private func key(_ options: StudioSettings) -> String { options.engine + "|" + options.modelFolder }
+    private func key(_ options: StudioSettings) -> String {
+        // Server settings must not reload a local model, so only the server engine keys on them.
+        options.engine == "server" ? "server|" + options.serverURL : options.engine + "|" + options.modelFolder
+    }
 
     private func retainUnfinishedPreparation() {
         retiredPreparations.removeAll { $0.result != nil }
@@ -1146,7 +1168,7 @@ public final class StudioSession {
     }
 
     /// Normalized PCM16 WAV for durable history and unsaved playback.
-    static func wavData(_ samples: [Float]) -> Data {
+    nonisolated static func wavData(_ samples: [Float]) -> Data {
         var data = Data()
         func text(_ value: String) { data.append(contentsOf: value.utf8) }
         func number<T: FixedWidthInteger>(_ value: T) {

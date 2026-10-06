@@ -22,11 +22,13 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var skillsFolder = ""
     /// While recording, text highlighted in other apps replaces the "this" or "that" said about it.
     public var quoteHighlights = false
+    /// Address of a Nami server that transcribes or cleans up instead of local models.
+    public var serverURL = ""
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case engine, modelFolder, language, vocabulary, transcriptFont, appearance, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID, skillsFolder
-        case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory, quoteHighlights
+        case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory, quoteHighlights, serverURL
     }
 
     public init(from decoder: Decoder) throws {
@@ -51,6 +53,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         microphoneUID = try values.decodeIfPresent(String.self, forKey: .microphoneUID)
         skillsFolder = try values.decodeIfPresent(String.self, forKey: .skillsFolder) ?? ""
         quoteHighlights = try values.decodeIfPresent(Bool.self, forKey: .quoteHighlights) ?? false
+        serverURL = try values.decodeIfPresent(String.self, forKey: .serverURL) ?? ""
     }
 
     public static func load(project: URL) throws -> Self {
