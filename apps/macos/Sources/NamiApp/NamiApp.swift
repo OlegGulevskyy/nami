@@ -126,6 +126,10 @@ struct NamiApp: App {
                            size: RecordingIndicatorView.size(phase: .choosingMicrophone, microphoneChoices: 3),
                            to: output.appendingPathComponent("indicator-choosing-microphone.png"))
             try render(to: output.appendingPathComponent("local-model.png"), settingsPage: .model)
+            try render(to: output.appendingPathComponent("cloud-models.png"), settingsPage: .model,
+                       size: NSSize(width: 1080, height: 2000))
+            try render(to: output.appendingPathComponent("cloud-models-compact.png"), settingsPage: .model,
+                       size: NSSize(width: 760, height: 1400))
             try render(to: output.appendingPathComponent("about.png"), settingsPage: .about)
             try render(to: output.appendingPathComponent("settings.png"), settingsPage: .general)
             try render(to: output.appendingPathComponent("settings-compact.png"), settingsPage: .general,

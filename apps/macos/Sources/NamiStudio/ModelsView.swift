@@ -33,7 +33,7 @@ struct ModelsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 HStack {
-                    Text("Download models or delete them to free space.")
+                    Text("Choose local models, cloud dictation, or your own server.")
                         .font(.system(size: 14)).foregroundStyle(StudioStyle.quiet)
                     Spacer()
                     Button("Open model folder") {
@@ -59,6 +59,7 @@ struct ModelsView: View {
                 if session.modelMaintenance {
                     HStack { ProgressView().controlSize(.small); Text("Removing model…") }
                 }
+                CloudDictationSettingsView(session: session)
                 VStack(alignment: .leading, spacing: 16) {
                     StudioSectionHeader(title: "Server")
                     serverRow

@@ -274,6 +274,44 @@ private func projectDirectory() throws -> URL {
     return url
 }
 
+@Test @MainActor func cloudDictationUsesNormalCapturePasteAndHistoryAndRebuildsAfterKeyChange() async throws {
+    let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
+    let capture = TestCapture()
+    var builds: [String] = [], copies: [String] = [], pasted: [String] = []
+    var savedKey = "initial-key"
+    let store = DictationAPIKeyStore(load: { _ in savedKey }, save: { _, value in savedKey = value })
+    let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
+        permissions: allowedPermissions(), pastePreparer: { { text, _ in pasted.append(text); return .sent } },
+        engineBuilder: { settings in
+            let provider = DictationProvider(engineID: settings.engine)!
+            builds.append(settings.cloudModel(for: provider) + ":" + savedKey)
+            return DictationFileEngine(client: DictationFileClient(configuration: .init(provider: provider,
+                model: settings.cloudModel(for: provider), region: .eu, apiKey: savedKey), transport: { request in
+                    (Data(#"{"text":"Bonjour, Nami."}"#.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }))
+        }, dictationKeyStore: store, captureBuilder: { _ in capture }, clipboardWriter: { copies.append($0); return true })
+    session.settings.engine = "cloud-groq"
+    session.settings.language = "fr"
+    session.settings.cleanupEnabled = false
+    for take in 0..<3 {
+        if take == 1 { session.settings.cloudModels["groq"] = "whisper-large-v3" }
+        if take == 2 { try session.saveDictationKey("replacement-key", provider: .groq) }
+        session.startRecording()
+        try await waitUntil { session.phase == .recording }
+        capture.emit(seconds: 0.1)
+        try await waitUntil { session.capturedSeconds == 0.1 }
+        session.stopRecording()
+        try await waitUntil { !session.phase.busy }
+        #expect(session.phase == .idle)
+    }
+    #expect(copies == Array(repeating: "Bonjour, Nami.", count: 3))
+    #expect(pasted == copies)
+    #expect(builds == ["whisper-large-v3-turbo:initial-key", "whisper-large-v3:initial-key", "whisper-large-v3:replacement-key"])
+    #expect(session.runs.allSatisfy { $0.engine == "cloud-groq" && $0.outcome == .completed })
+    #expect(Set(session.runs.map(\.model)) == ["Groq · whisper-large-v3-turbo", "Groq · whisper-large-v3"])
+    #expect(try RecordingHistoryStore(directory: session.historyDirectory).load().runs.count == 3)
+}
+
 @MainActor private final class TestCleanupProcessor: TextProcessor {
     nonisolated let identifier: String
     let output: String

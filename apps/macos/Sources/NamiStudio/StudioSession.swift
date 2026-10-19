@@ -78,6 +78,19 @@ public final class StudioSession {
         }
     }
     var serverEndpoint: NamiServerEndpoint? { NamiServerEndpoint(address: settings.serverURL) }
+    @ObservationIgnored private let dictationKeys: DictationAPIKeyStore
+    private var dictationKeyRevision = 0
+
+    func hasDictationKey(_ provider: DictationProvider) throws -> Bool {
+        !(try dictationKeys.load(provider) ?? "").isEmpty
+    }
+
+    func saveDictationKey(_ key: String, provider: DictationProvider) throws {
+        guard !busyForUpdate else { throw StudioError.message("Finish the current task before changing an API key.") }
+        try dictationKeys.save(provider, key.trimmingCharacters(in: .whitespacesAndNewlines))
+        dictationKeyRevision += 1
+        settingsChanged()
+    }
     public let project: URL
     public private(set) var phase: StudioPhase = .idle
     public private(set) var isCleaningUp = false
@@ -185,6 +198,7 @@ public final class StudioSession {
                 // Unavailable by default: the live reader copies in Google editors.
                 selectionReading: SelectionReading = .unavailable,
                 engineBuilder: (@MainActor (StudioSettings) throws -> any TranscriptionEngine)? = nil,
+                dictationKeyStore: DictationAPIKeyStore? = nil,
                 cleanupProcessors: [CleanupEngine: any TextProcessor] = [:],
                 modelDirectory: URL? = nil,
                 captureBuilder: @escaping @MainActor (String?) -> any AudioCapturing,
@@ -202,6 +216,8 @@ public final class StudioSession {
         let debuggingDirectory = historyDirectory?.appendingPathComponent("InternalDebugging")
             ?? RecordingHistoryStore.defaultDirectory.deletingLastPathComponent().appendingPathComponent("InternalDebugging")
         let serverConnection = NamiServerConnection()
+        let dictationKeys = dictationKeyStore ?? (CommandLine.arguments.contains("--snapshot") ? .unavailable : .keychain())
+        self.dictationKeys = dictationKeys
         self.debugging = DebuggingSession(directory: debuggingDirectory,
             cleanupService: CleanupService(processors: cleanupProcessors, modelsRoot: modelDirectory ?? QwenModelAssets.root,
                                            serverConnection: serverConnection),
@@ -212,6 +228,13 @@ public final class StudioSession {
         self.destinationPinner = destinationPinner
         self.selectionReading = selectionReading
         self.engineBuilder = engineBuilder ?? { settings in
+            if let provider = DictationProvider(engineID: settings.engine) {
+                let configuration = DictationCloudConfiguration(provider: provider, model: settings.cloudModel(for: provider),
+                    region: settings.cloudRegion(for: provider), apiKey: try dictationKeys.load(provider) ?? "")
+                try configuration.validate()
+                if provider == .soniox { return SonioxDictationEngine(configuration: configuration) }
+                return DictationFileEngine(client: DictationFileClient(configuration: configuration))
+            }
             if settings.engine == "server" {
                 guard let endpoint = serverConnection.endpoint else {
                     throw StudioError.message("Enter your Nami server's address in Models.")
@@ -312,10 +335,14 @@ public final class StudioSession {
     public var selectedRun: RecordingRun? { runs.first { $0.id == selectedRunID } ?? runs.first }
     public var selectedPrompt: ReadingPrompt? { prompts.first { $0.id == selectedPromptID } }
     public var modelName: String {
-        settings.engine == "fake" ? "Demo engine" : settings.modelFolder.isEmpty && !["fast", "server"].contains(settings.engine) ? "Choose a model folder" : modelLabel(settings)
+        if DictationProvider(engineID: settings.engine) != nil { return modelLabel(settings) }
+        return settings.engine == "fake" ? "Demo engine" : settings.modelFolder.isEmpty && !["fast", "server"].contains(settings.engine) ? "Choose a model folder" : modelLabel(settings)
     }
     private func modelLabel(_ options: StudioSettings) -> String {
-        switch options.engine {
+        if let provider = DictationProvider(engineID: options.engine) {
+            return provider.title + " · " + options.cloudModel(for: provider)
+        }
+        return switch options.engine {
         case "fast": "Parakeet Ultra · Whisper verification"
         case "server": "Nami server · " + (NamiServerEndpoint(address: options.serverURL)?.displayName ?? "no address")
         default: URL(fileURLWithPath: options.modelFolder).lastPathComponent
@@ -368,7 +395,7 @@ public final class StudioSession {
 
     private func prepareInBackground() {
         guard !modelMaintenance else { return }
-        guard ["fake", "server"].contains(settings.engine) || !settings.modelFolder.isEmpty else { return }
+        guard DictationProvider(engineID: settings.engine) != nil || ["fake", "server"].contains(settings.engine) || !settings.modelFolder.isEmpty else { return }
         do { _ = try preparationFor(settings) }
         catch { modelPreparationError = error.localizedDescription }
     }
@@ -1088,8 +1115,11 @@ public final class StudioSession {
         if automaticPreparationEnabled && !permissions.needsSetup { prepareInBackground() }
     }
     private func key(_ options: StudioSettings) -> String {
+        if let provider = DictationProvider(engineID: options.engine) {
+            return "\(options.engine)|\(options.cloudModel(for: provider))|\(options.cloudRegion(for: provider).rawValue)|\(dictationKeyRevision)"
+        }
         // Server settings must not reload a local model, so only the server engine keys on them.
-        options.engine == "server" ? "server|" + options.serverURL : options.engine + "|" + options.modelFolder
+        return options.engine == "server" ? "server|" + options.serverURL : options.engine + "|" + options.modelFolder
     }
 
     private func retainUnfinishedPreparation() {

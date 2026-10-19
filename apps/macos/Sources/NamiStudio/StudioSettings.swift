@@ -24,11 +24,21 @@ public struct StudioSettings: Codable, Equatable, Sendable {
     public var quoteHighlights = false
     /// Address of a Nami server that transcribes or cleans up instead of local models.
     public var serverURL = ""
+    /// Model choices and regions are safe to persist; API keys live only in Keychain.
+    public var cloudModels: [String: String] = [:]
+    public var cloudRegions: [String: DictationCloudRegion] = [:]
+    public func cloudModel(for provider: DictationProvider) -> String {
+        cloudModels[provider.rawValue] ?? provider.models[0].id
+    }
+    public func cloudRegion(for provider: DictationProvider) -> DictationCloudRegion {
+        cloudRegions[provider.rawValue] ?? .eu
+    }
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
         case engine, modelFolder, language, vocabulary, transcriptFont, appearance, saveAudio, copyWhenFinished, pasteWhenFinished, audioDirectory, microphoneUID, skillsFolder
         case cleanupEnabled, cleanupEngine, cleanupTimeoutSeconds, cleanupUseMemory, quoteHighlights, serverURL
+        case cloudModels, cloudRegions
     }
 
     public init(from decoder: Decoder) throws {
@@ -54,6 +64,8 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         skillsFolder = try values.decodeIfPresent(String.self, forKey: .skillsFolder) ?? ""
         quoteHighlights = try values.decodeIfPresent(Bool.self, forKey: .quoteHighlights) ?? false
         serverURL = try values.decodeIfPresent(String.self, forKey: .serverURL) ?? ""
+        cloudModels = try values.decodeIfPresent([String: String].self, forKey: .cloudModels) ?? [:]
+        cloudRegions = try values.decodeIfPresent([String: DictationCloudRegion].self, forKey: .cloudRegions) ?? [:]
     }
 
     public static func load(project: URL) throws -> Self {

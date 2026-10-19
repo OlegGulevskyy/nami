@@ -8,3 +8,7 @@ xcuserdata/
 .venv/
 .pytest_cache/
 .ruff_cache/
+
+# Generated research and review artifacts.
+/reports/
+/research_notes/

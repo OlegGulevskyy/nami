@@ -605,8 +605,8 @@ Allow time for the download and initial Core ML specialization.
 ```
 
 The download command saves the model-folder path in the project's `nami.json`.
-The current config already points to the large-v3-turbo model downloaded on this
-Mac. Run from the project directory:
+This file contains personal settings and is ignored by Git; `nami.example.json`
+is a portable starting point. After downloading, run from the project directory:
 
 ```sh
 .build/release/nami-bench record --seconds 10

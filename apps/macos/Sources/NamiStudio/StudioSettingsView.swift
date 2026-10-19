@@ -492,7 +492,7 @@ public struct StudioSettingsView: View {
     @ViewBuilder private var about: some View {
         VStack(spacing: 8) {
             Text("nami").font(.system(size: 32, weight: .semibold, design: .rounded)).tracking(-1)
-            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.2")")
+            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown")")
                 .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
             if let updates = session.updates {
                 Button("Check for Updates…", action: updates.checkForUpdates)
