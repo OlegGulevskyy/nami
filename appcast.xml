@@ -4,16 +4,16 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Nami</title>
         <item>
-            <title>1.1.0</title>
-            <pubDate>Thu, 01 Oct 2026 10:17:17 +0000</pubDate>
-            <sparkle:version>20</sparkle:version>
-            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <title>1.1.1</title>
+            <pubDate>Mon, 19 Oct 2026 14:31:08 +0000</pubDate>
+            <sparkle:version>21</sparkle:version>
+            <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/OlegGulevskyy/nami/releases/download/v1.1.0/Nami-1.1.0-macOS-arm64.zip" length="23760582" type="application/octet-stream" sparkle:edSignature="0J5EMrnrGAiR3qt1ezCfdKB3+wpEoUv6n2gMGtPisaJ79fxKy0jSvDfaaT+DtrqWFdeGNvn6Nzc2eYQwb7JRCg=="></enclosure>
+            <enclosure url="https://github.com/OlegGulevskyy/nami/releases/download/v1.1.1/Nami-1.1.1-macOS-arm64.zip" length="23981528" type="application/octet-stream" sparkle:edSignature="21Glhl8TidbmJAf2UfxUMZfDR/0GIn7+lnr7/88N7eaT9nIcinfiEVFgHmRC6yplZjvZyZjNh88pYR+NFlimAw=="></enclosure>
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: pZcSab13xFIU1RGHb+u2tZxqFaCfa3nid+2qAPO2NOPW85oP6xn+NVqKlI2M2A/R0pnc9wKcvtwJCKA1i8nIBQ==
+edSignature: VGYa7p8lOcplv4G4k8gReISJs6d6jaKRysb2O7NRxh0jgJkovkywnaS1jFRZ5XkdWSBdM8WE6gjv1gAyJYj7CA==
 length: 1127
 -->
