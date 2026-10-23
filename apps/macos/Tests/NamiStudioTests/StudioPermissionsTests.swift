@@ -35,12 +35,12 @@ import Testing
     }
 }
 
-@Test @MainActor func accessibilityIsOptionalAndRequestedOnlyFromUserAction() {
+@Test @MainActor func accessibilityIsRequiredAndRequestedOnlyFromUserAction() {
     let system = PermissionSystem()
     system.microphone = .authorized
     system.inputMonitoring = true
     let permissions = system.permissions()
-    #expect(!permissions.needsSetup)
+    #expect(permissions.needsSetup)
     #expect(!permissions.accessibility)
     #expect(system.accessibilityRequests == 0)
     permissions.resolveAccessibility()
@@ -49,20 +49,21 @@ import Testing
     system.accessibility = true
     permissions.refresh()
     #expect(permissions.accessibility)
+    #expect(!permissions.needsSetup)
     permissions.resolveAccessibility()
     #expect(system.accessibilityRequests == 1)
     system.accessibility = false
     system.canOpenSettings = false
     permissions.resolveAccessibility()
     #expect(permissions.settingsError?.contains("Accessibility") == true)
-    #expect(!permissions.needsSetup)
+    #expect(permissions.needsSetup)
 }
 
-@Test @MainActor func firstLaunchChecksWithoutPromptingAndRequiresBothPermissions() async {
+@Test @MainActor func firstLaunchChecksWithoutPromptingAndRequiresAllThreePermissions() async {
     let system = PermissionSystem()
     let permissions = system.permissions()
     #expect(permissions.needsSetup)
-    #expect(system.microphoneRequests == 0 && system.inputRequests == 0)
+    #expect(system.microphoneRequests == 0 && system.inputRequests == 0 && system.accessibilityRequests == 0)
     system.grantMicrophone = true
     await permissions.resolveMicrophone()
     #expect(system.microphoneRequests == 1)
@@ -71,6 +72,9 @@ import Testing
     system.grantInput = true
     permissions.resolveInputMonitoring()
     #expect(system.inputRequests == 1)
+    #expect(permissions.needsSetup)
+    system.accessibility = true
+    permissions.refresh()
     #expect(!permissions.needsSetup)
     #expect(system.opened.isEmpty)
     await permissions.resolveMicrophone()
@@ -81,6 +85,7 @@ import Testing
 @Test @MainActor func deniedMicrophoneOffersSettingsAndDetectsRecoveryAndRevocation() async {
     let system = PermissionSystem()
     system.inputMonitoring = true
+    system.accessibility = true
     let permissions = system.permissions()
     await permissions.resolveMicrophone()
     #expect(permissions.microphone == .denied && permissions.needsSetup)
@@ -122,6 +127,8 @@ import Testing
     var completion: CheckedContinuation<Bool, Never>?
     var requests = 0
     let permissions = StudioPermissions(microphoneStatus: { .notDetermined }, inputMonitoringStatus: { false },
+        accessibilityStatus: { false },
+        requestAccessibility: { Issue.record("Accessibility request must wait for the microphone dialog"); return false },
         requestMicrophone: {
             requests += 1
             return await withCheckedContinuation { completion = $0 }
@@ -132,6 +139,7 @@ import Testing
     #expect(permissions.requestingMicrophone)
     await permissions.resolveMicrophone()
     permissions.resolveInputMonitoring()
+    permissions.resolveAccessibility()
     permissions.showSettings(.microphone)
     #expect(requests == 1)
     completion?.resume(returning: false)

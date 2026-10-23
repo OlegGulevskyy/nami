@@ -13,6 +13,7 @@ import NamiAudio
     let inputRefreshes = Counter()
     let session = StudioSession(project: directory, historyDirectory: directory.appendingPathComponent("History"),
         permissions: StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
+            accessibilityStatus: { true }, requestAccessibility: { false },
             requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
         pastePreparer: { { _, _ in .targetUnavailable } }, modelDirectory: directory.appendingPathComponent("Models"),
         captureBuilder: { _ in fatalError("Page switching must not open the microphone") },
@@ -36,16 +37,20 @@ import NamiAudio
 
     let startupRefreshes = inputRefreshes.value
     show(.settings)
-    let editor = try #require(vocabularyEditors(in: host).first)
     #expect(inputRefreshes.value == startupRefreshes + 1)
 
+    show(.vocabulary)
+    let editor = try #require(vocabularyEditors(in: host).first)
     show(.history)
     // Hidden, not torn down, and not refreshed while hidden.
     #expect(vocabularyEditors(in: host).contains { $0 === editor })
     #expect(inputRefreshes.value == startupRefreshes + 1)
 
-    show(.settings)
-    // The same page comes back instead of a rebuilt one, and still refreshes what it shows.
+    show(.vocabulary)
+    // Vocabulary keeps its editor without refreshing unrelated input devices.
     #expect(vocabularyEditors(in: host).first === editor)
+    #expect(inputRefreshes.value == startupRefreshes + 1)
+
+    show(.settings)
     #expect(inputRefreshes.value == startupRefreshes + 2)
 }

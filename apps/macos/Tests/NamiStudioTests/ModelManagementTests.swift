@@ -25,8 +25,9 @@ private func fakeWhisper(at folder: URL) throws {
 @MainActor private func modelSession(_ root: URL, processors: [CleanupEngine: any TextProcessor] = [:]) -> StudioSession {
     StudioSession(project: root, historyDirectory: root.appendingPathComponent("History"),
         permissions: StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
+            accessibilityStatus: { true }, requestAccessibility: { false },
             requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
-        pastePreparer: { { _, _ in .targetUnavailable } }, cleanupProcessors: processors,
+        pastePreparer: { { _, _ in .targetUnavailable } }, dictationKeyStore: .unavailable, cleanupProcessors: processors,
         modelDirectory: root.appendingPathComponent("Models"), captureBuilder: { _ in ModelTestCapture() }, clipboardWriter: { _ in true })
 }
 
@@ -176,4 +177,41 @@ private actor ManagedCleanupProbe: TextProcessor {
         view.cacheDisplay(in: view.bounds, to: bitmap)
         try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appendingPathComponent("models-\(Int(size.width)).png"))
     }
+}
+
+@Test(arguments: ["whisperkit", "server", "fake", "cloud-soniox", "cloud-assemblyai", "cloud-mistral", "retired-engine", "fast", "cloud-groq"])
+func savedDictationSelectionsMigrateWithoutChangingCLIConfiguration(engine: String) throws {
+    let root = modelTestRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let config: [String: Any] = [
+        "engine": engine,
+        "modelFolder": "models/old-whisper",
+        "studio": [
+            "engine": "cloud-mistral", "language": "fr", "vocabulary": "Nami, Oleg",
+            "copyWhenFinished": false, "pasteWhenFinished": false,
+            "cloudModels": ["groq": "retired-groq-model"],
+            "cleanupEngine": "server", "cleanupEnabled": true
+        ]
+    ]
+    let url = root.appendingPathComponent("nami.json")
+    let original = try JSONSerialization.data(withJSONObject: config)
+    try original.write(to: url)
+    let settings = try StudioSettings.load(project: root)
+    #expect(settings.engine == (engine == "cloud-groq" ? "cloud-groq" : "fast"))
+    #expect(settings.cloudModel(for: .groq) == "whisper-large-v3-turbo")
+    #expect(settings.copyWhenFinished && settings.pasteWhenFinished)
+    #expect(settings.cleanupEngine == .automatic)
+    #expect(settings.language == "fr" && settings.vocabulary == "Nami, Oleg")
+    #expect(settings.modelFolder == root.appendingPathComponent("models/old-whisper").path)
+    // Migration is in-memory until an app edit; CLI configuration is not rewritten on launch.
+    #expect(try Data(contentsOf: url) == original)
+}
+
+@Test func newDictationSettingsUseLocalParakeetAndAutomaticPaste() throws {
+    let root = modelTestRoot()
+    let settings = try StudioSettings.load(project: root)
+    #expect(settings.engine == "fast")
+    #expect(settings.copyWhenFinished && settings.pasteWhenFinished)
+    #expect(settings.modelFolder.isEmpty)
 }

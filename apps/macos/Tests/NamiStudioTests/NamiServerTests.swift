@@ -113,7 +113,7 @@ private final class Requests: @unchecked Sendable {
     #expect(result.text == "um hello")
 }
 
-@Test func serverAddressPersistsInSettings() throws {
+@Test func legacyServerAddressIsRetainedWhileDictationMigratesLocally() throws {
     let project = FileManager.default.temporaryDirectory.appendingPathComponent("nami-server-test-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: project) }
@@ -125,6 +125,6 @@ private final class Requests: @unchecked Sendable {
     try settings.save(project: project)
     let loaded = try StudioSettings.load(project: project)
     #expect(loaded.serverURL == "http://192.168.1.24:8765")
-    #expect(loaded.engine == "server")
-    #expect(loaded.cleanupEngine == .server)
+    #expect(loaded.engine == "fast")
+    #expect(loaded.cleanupEngine == .automatic)
 }

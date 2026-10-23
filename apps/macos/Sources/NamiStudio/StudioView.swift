@@ -7,38 +7,37 @@ import UniformTypeIdentifiers
 public struct StudioView: View {
     @Bindable var session: StudioSession
     public enum Page: String, CaseIterable, Sendable {
-        case history = "History", snippets = "Snippets", actions = "Actions", debugging = "Playground", settings = "Settings"
-        case shortcuts = "Shortcuts", model = "Models", about = "About"
+        case history = "History", vocabulary = "Vocabulary", snippets = "Snippets", actions = "Actions", settings = "Settings"
+        case shortcuts = "Shortcuts", model = "Models"
 
         var symbol: String {
             switch self {
             case .history: "clock.arrow.circlepath"
+            case .vocabulary: "text.book.closed"
             case .settings: "gearshape"
             case .shortcuts: "keyboard"
             case .model: "cpu"
             case .snippets: "curlybraces"
             case .actions: "bolt"
-            case .about: "info.circle"
-            case .debugging: "flask"
             }
         }
 
         /// The main destinations, at the top of the sidebar.
-        static let primary: [Page] = [.history, .snippets, .actions]
+        static let primary: [Page] = [.history, .vocabulary, .snippets, .actions]
         /// Tools and configuration, pinned to the bottom of the sidebar.
-        static let secondary: [Page] = [.debugging, .settings]
+        static let secondary: [Page] = [.settings]
         /// Sections of Settings, switched with tabs in its header.
-        static let settingsTabs: [Page] = [.settings, .shortcuts, .model, .about]
+        static let settingsTabs: [Page] = [.settings, .shortcuts, .model]
 
         /// Pressed with Command to switch pages from anywhere in the window.
         /// Settings opens with the app menu's ⌘, instead.
         var shortcutKey: Character? {
             switch self {
             case .history: "1"
-            case .snippets: "2"
-            case .actions: "3"
-            case .debugging: "4"
-            case .settings, .shortcuts, .model, .about: nil
+            case .vocabulary: "2"
+            case .snippets: "3"
+            case .actions: "4"
+            case .settings, .shortcuts, .model: nil
             }
         }
 
@@ -52,11 +51,10 @@ public struct StudioView: View {
 
         var settingsPage: StudioSettingsView.Page? {
             switch self {
-            case .history, .debugging, .snippets, .actions: nil
+            case .history, .vocabulary, .snippets, .actions: nil
             case .settings: .general
             case .shortcuts: .shortcuts
             case .model: .model
-            case .about: .about
             }
         }
     }
@@ -107,7 +105,7 @@ public struct StudioView: View {
                         finishSidebarResize(availableWidth: availableWidth)
                     })
                     .frame(width: 8)
-                    .background(resizingSidebar ? StudioStyle.green.opacity(0.12) : .clear)
+                    .background(resizingSidebar ? StudioStyle.accent.opacity(0.12) : .clear)
                     .help("Drag to resize the sidebar. Drag left to collapse to icons.")
                     .accessibilityElement()
                     .accessibilityLabel("Sidebar width")
@@ -159,7 +157,7 @@ public struct StudioView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .font(.system(size: 16)).foregroundStyle(StudioStyle.ink)
-        .background(StudioStyle.paper).tint(StudioStyle.green)
+        .background(StudioStyle.paper).tint(StudioStyle.accent)
         .task {
             recheckPermissions()
             // Keep the gate current even when System Settings stays in front.
@@ -181,17 +179,15 @@ public struct StudioView: View {
             shortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
         }
         .onExitCommand {
-            if page == .debugging && session.debugging.cleanupLab.isBusy { session.debugging.cleanupLab.cancel() }
-            else if page == .debugging && session.debugging.isBusy { session.debugging.cancel() }
-            else if page != .history { page = .history }
+            if page != .history { page = .history }
             else if searchVisible { query = ""; searchVisible = false }
             else { session.cancel() }
         }
     }
 
     @ViewBuilder private func pageContent(_ item: Page) -> some View {
-        if item == .debugging {
-            InternalDebuggingView(session: session, lab: session.debugging)
+        if item == .vocabulary {
+            VocabularyView(session: session)
         } else if item == .snippets {
             SnippetsView(session: session)
         } else if item == .actions {
@@ -247,17 +243,6 @@ public struct StudioView: View {
                         .padding(.horizontal, 16).padding(.vertical, 12)
                         .studioGlass(in: RoundedRectangle(cornerRadius: 12))
                 }
-                if session.settings.pasteWhenFinished && !session.permissions.accessibility {
-                    HStack(spacing: 10) {
-                        Text("Allow Accessibility to paste your recordings automatically.")
-                        Spacer(minLength: 8)
-                        Button("Allow Accessibility…", action: session.permissions.resolveAccessibility)
-                            .buttonStyle(.plain).underline().disabled(session.phase.busy)
-                    }
-                    .font(.system(size: 12)).foregroundStyle(StudioStyle.green)
-                    .padding(.horizontal, 16).padding(.vertical, 12)
-                    .studioGlass(in: RoundedRectangle(cornerRadius: 12))
-                }
                 recordingBar
             }
             .padding(.horizontal, 28).padding(.top, 16).padding(.bottom, 18)
@@ -274,7 +259,7 @@ public struct StudioView: View {
             HStack(spacing: 0) {
                 if !sidebarCollapsed {
                     StudioLogo()
-                        .foregroundStyle(StudioStyle.green)
+                        .foregroundStyle(StudioStyle.accent)
                         .frame(width: 42, height: 32)
                         .padding(.leading, 12)
                     Spacer(minLength: 0)
@@ -335,7 +320,7 @@ public struct StudioView: View {
                     }
                 }
             }
-            .foregroundStyle(selected ? StudioStyle.green : hovered ? StudioStyle.ink : StudioStyle.quiet)
+            .foregroundStyle(selected ? StudioStyle.accent : hovered ? StudioStyle.ink : StudioStyle.quiet)
             .padding(.horizontal, sidebarCollapsed ? 0 : 10)
             .frame(maxWidth: .infinity).frame(height: 36)
             .background(selected ? StudioStyle.selection : hovered ? StudioStyle.soft.opacity(0.7) : .clear,
@@ -358,7 +343,7 @@ public struct StudioView: View {
                 let title = tab.settingsPage?.rawValue ?? tab.rawValue
                 Button { page = tab } label: {
                     Text(title).font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(selected ? StudioStyle.green : StudioStyle.quiet)
+                        .foregroundStyle(selected ? StudioStyle.accent : StudioStyle.quiet)
                         .padding(.horizontal, 12).frame(height: 28)
                         .background(selected ? StudioStyle.selection : .clear, in: Capsule())
                         .contentShape(Capsule())
@@ -379,11 +364,6 @@ public struct StudioView: View {
             if page.settingsPage != nil { settingsTabs }
             Spacer()
             if page == .history {
-                HStack(spacing: 8) {
-                    Circle().fill(StudioStyle.green.opacity(0.75)).frame(width: 6, height: 6)
-                    Text(session.settings.engine == "fake" ? "Demo mode" : session.settings.engine == "server" ? "Nami server" : "On-device")
-                        .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-                }
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) { searchVisible.toggle() }
                     searchFocused = searchVisible
@@ -443,13 +423,10 @@ public struct StudioView: View {
             Image(systemName: query.isEmpty ? "text.alignleft" : "magnifyingglass")
                 .font(.system(size: 30, weight: .light)).foregroundStyle(StudioStyle.quiet.opacity(0.7))
                 .padding(.bottom, 4)
-            Text(query.isEmpty ? "Your first thought goes here." : "No matching words.")
+            Text(query.isEmpty ? "No recordings yet" : "No matching transcripts")
                 .font(.system(size: 22, weight: .medium, design: .rounded))
-            Text(query.isEmpty ? "Record something on your mind, or import an audio file."
-                 : "Try another word or clear your search.")
-                .font(.system(size: 14)).foregroundStyle(StudioStyle.quiet)
             if !query.isEmpty {
-                Button("Clear search") { query = "" }.buttonStyle(.plain).foregroundStyle(StudioStyle.green)
+                Button("Clear search") { query = "" }.buttonStyle(.plain).foregroundStyle(StudioStyle.accent)
             }
         }.multilineTextAlignment(.center).padding(24)
     }
@@ -468,7 +445,7 @@ public struct StudioView: View {
                 .accessibilityLabel("Open Input Monitoring settings")
         }
         .font(.system(size: 12))
-        .foregroundStyle(StudioStyle.green)
+        .foregroundStyle(StudioStyle.accent)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -484,7 +461,7 @@ public struct StudioView: View {
                     }
                 }
                 .frame(width: 36, height: 36)
-                .studioGlass(in: Circle(), tint: StudioStyle.greenFill, interactive: true)
+                .studioGlass(in: Circle(), tint: StudioStyle.accentFill, interactive: true)
                 .contentShape(Circle())
             }
             .buttonStyle(.plain).disabled(session.phase.busy && session.phase != .recording)
@@ -518,19 +495,19 @@ public struct StudioView: View {
                 .keyboardShortcut("o", modifiers: .command)
                 .help("Import audio (⌘O)").accessibilityLabel("Import audio")
         }
-        .foregroundStyle(StudioStyle.green).padding(.horizontal, 14).padding(.vertical, 10)
+        .foregroundStyle(StudioStyle.accent).padding(.horizontal, 14).padding(.vertical, 10)
         .studioGlass(in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var recordingTitle: String {
         switch session.phase {
-        case .idle: "Ready when you are"
+        case .idle: "Ready to record"
         case .recording: session.awaitingMicrophone ? "Waiting for the microphone" : "Listening"
         case .preparing: "Getting ready"
-        case .processing: "Finding your words"
+        case .processing: "Transcribing"
         case .cancelling: "Cancelling recording"
         case .choosingMicrophone: "Choose a microphone"
-        case .failed: "Let’s try that again"
+        case .failed: "Recording failed"
         }
     }
     private var waveform: some View {
@@ -566,13 +543,6 @@ private struct RecordingHistoryRow: View {
 
     private var needsAttention: Bool { run.historyNotice?.needsAttention == true }
 
-    @ViewBuilder private var transcriptionTime: some View {
-        if let seconds = run.transcriptionSeconds {
-            Text("Transcribed in \(Int(seconds * 1000)) ms")
-                .help("Time from the end of the recording until the text was ready, before cleanup.")
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 24) {
@@ -593,16 +563,14 @@ private struct RecordingHistoryRow: View {
                 HStack(spacing: 12) {
                     Label("Action · \(name)", systemImage: StudioView.Page.actions.symbol)
                         .help("This recording ran the action instead of being pasted.")
-                    transcriptionTime
                 }.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
             } else if run.cleanupResult != nil || run.snippetName != nil {
                 HStack(spacing: 12) {
-                    transcriptionTime
                     if let name = run.snippetName {
                         Label("Snippet · \(name)", systemImage: StudioView.Page.snippets.symbol)
                             .help("Your words were replaced by this snippet. What you said is available below.")
-                    } else if let result = run.cleanupResult {
-                        Text("\(CleanupEngine.title(for: result.provider)) · \(Int(result.elapsedSeconds * 1000)) ms · \(result.succeeded ? "Cleanup applied" : "Original kept")")
+                    } else if let result = run.cleanupResult, !result.succeeded {
+                        Text("Original kept")
                             .help(result.reason ?? "Original transcript is available below.")
                     }
                     Spacer()
@@ -614,8 +582,6 @@ private struct RecordingHistoryRow: View {
                         .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14).background(StudioStyle.soft, in: RoundedRectangle(cornerRadius: 8))
                 }
-            } else if run.transcriptionSeconds != nil {
-                transcriptionTime.font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
             }
             if !needsAttention { StudioStyle.divider }
         }

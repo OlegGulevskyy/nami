@@ -59,14 +59,15 @@ struct NamiApp: App {
     var body: some Scene {
         Window("Nami · Recording history", id: "studio") {
             StudioView(session: session, page: $page)
-                .onDisappear { session.cancel(); session.stopPlayback(); session.debugging.cancel(); session.debugging.cleanupLabCancel(); session.debugging.stopPlayback() }
+                // Dictation belongs to the app and keeps running without a window.
+                .onDisappear { session.stopPlayback() }
                 .task { await runVisualCheckIfRequested() }
         }
         .defaultSize(width: 1080, height: 850)
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .commands {
-            CommandGroup(after: .appInfo) {
+            CommandGroup(replacing: .appInfo) {
                 Button("Check for Updates…") { session.updates?.checkForUpdates() }
                     .disabled(session.updates?.canCheckForUpdates != true || session.busyForUpdate)
             }
@@ -87,19 +88,11 @@ struct NamiApp: App {
         do {
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
             try await Task.sleep(for: .milliseconds(300))
-            if args.contains("--cleanup-check") {
-                let result = try await session.debugging.prepareCleanupSnapshot()
-                try result.write(to: output.appendingPathComponent("cleanup-result.json"))
-                for size in [NSSize(width: 1080, height: 1050), NSSize(width: 760, height: 850)] {
-                    try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
-                        size: size, to: output.appendingPathComponent("cleanup-\(Int(size.width)).png"))
-                }
-                NSApplication.shared.terminate(nil)
-                return
-            }
             try render(to: output.appendingPathComponent("idle.png"))
-            try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
-                           size: NSSize(width: 1080, height: 850), to: output.appendingPathComponent("debugging-empty.png"))
+            for size in [NSSize(width: 1080, height: 850), NSSize(width: 760, height: 600)] {
+                try renderView(AnyView(StudioView(session: session, page: .constant(.vocabulary))),
+                               size: size, to: output.appendingPathComponent("vocabulary-\(Int(size.width)).png"))
+            }
             let permissionSession = StudioSession(project: session.project, historyDirectory: session.historyDirectory,
                 permissions: StudioPermissions(microphoneStatus: { .notDetermined }, inputMonitoringStatus: { false },
                     accessibilityStatus: { false }, requestAccessibility: { false },
@@ -130,7 +123,6 @@ struct NamiApp: App {
                        size: NSSize(width: 1080, height: 2000))
             try render(to: output.appendingPathComponent("cloud-models-compact.png"), settingsPage: .model,
                        size: NSSize(width: 760, height: 1400))
-            try render(to: output.appendingPathComponent("about.png"), settingsPage: .about)
             try render(to: output.appendingPathComponent("settings.png"), settingsPage: .general)
             try render(to: output.appendingPathComponent("settings-compact.png"), settingsPage: .general,
                        size: NSSize(width: 760, height: 600))
@@ -142,11 +134,6 @@ struct NamiApp: App {
             #if DEBUG
             if args.contains("--design-preview") {
                 session.loadDesignPreviewHistory()
-                session.debugging.loadDesignPreview()
-                try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
-                               size: NSSize(width: 1080, height: 1000), to: output.appendingPathComponent("debugging.png"))
-                try renderView(AnyView(StudioView(session: session, page: .constant(.debugging))),
-                               size: NSSize(width: 760, height: 850), to: output.appendingPathComponent("debugging-compact.png"))
                 try render(to: output.appendingPathComponent("history.png"))
                 try render(to: output.appendingPathComponent("history-compact.png"), size: NSSize(width: 760, height: 600))
                 try render(to: output.appendingPathComponent("settings-compact.png"), settingsPage: .general, size: NSSize(width: 800, height: 720))
@@ -188,7 +175,6 @@ struct NamiApp: App {
         case .general: .settings
         case .shortcuts: .shortcuts
         case .model: .model
-        case .about: .about
         case nil: shortcuts ? .shortcuts : .history
         }
         let content = AnyView(StudioView(session: session, page: .constant(selectedPage)))
@@ -197,7 +183,11 @@ struct NamiApp: App {
 
     @MainActor private func renderView(_ content: AnyView, size: NSSize, to url: URL) throws {
         let view = NSHostingView(rootView: content.frame(width: size.width, height: size.height))
-        view.appearance = NSAppearance(named: .aqua)
+        view.appearance = switch session.settings.appearance {
+        case .dark: NSAppearance(named: .darkAqua)
+        case .light: NSAppearance(named: .aqua)
+        case .system: NSApp.effectiveAppearance
+        }
         view.frame = NSRect(origin: .zero, size: size)
         view.layoutSubtreeIfNeeded()
         try cacheView(view, to: url)
@@ -216,5 +206,7 @@ struct NamiApp: App {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    // Keep global recording shortcuts available after ⌘W or the close button.
+    // The standard Quit command (⌘Q) still terminates the app.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

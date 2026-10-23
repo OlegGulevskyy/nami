@@ -313,7 +313,7 @@ private struct IndicatorRowButtonStyle: ButtonStyle {
 /// The same live audio bars in the dashboard and floating indicator.
 struct StudioWaveform: View {
     let levels: [Double]
-    var color = StudioStyle.green.opacity(0.7)
+    var color = StudioStyle.accent.opacity(0.7)
 
     var body: some View {
         Canvas { context, size in

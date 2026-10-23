@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nami 1.1.2 release notes</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 48px auto; padding: 0 24px; max-width: 720px; font: 17px/1.65 system-ui, sans-serif; }
+    h1 { line-height: 1.2; } li { margin: 12px 0; } a { color: LinkText; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Nami 1.1.2</h1>
+    <p>A simpler dictation interface with dedicated vocabulary editing and recording shortcuts that keep working after the window closes.</p>
+    <ul>
+      <li>Adds Vocabulary to the sidebar, with automatically saved names and technical terms.</li>
+      <li>Simplifies Models to on-device Parakeet and cloud dictation through Groq. Parakeet runs independently of Whisper.</li>
+      <li>Streamlines settings, model downloads, history, and light and dark appearances. Removes the Playground and About pages.</li>
+      <li>Keeps Nami and recording shortcuts running when its window closes. Use Command-Q to quit.</li>
+      <li>Includes Accessibility alongside Microphone and Input Monitoring in required permission setup.</li>
+    </ul>
+    <h2>Upgrading</h2>
+    <p>Existing selections other than Parakeet and Groq switch to on-device Parakeet. Download Parakeet in Settings → Models if needed. Server-based cleanup switches to automatic cleanup. Copy and paste on completion are enabled.</p>
+    <p>Sidebar shortcuts are now Command-1 for History, Command-2 for Vocabulary, Command-3 for Snippets, and Command-4 for Actions.</p>
+    <p>Requires an Apple Silicon Mac running macOS 14 or later. Groq requires internet access and a provider API key.</p>
+    <p>Install through Nami → Check for Updates, or download the app from the <a href="https://github.com/OlegGulevskyy/nami/releases/tag/v1.1.2">GitHub release</a> once its build completes.</p>
+  </main>
+</body>
+</html>

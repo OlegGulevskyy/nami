@@ -2,7 +2,7 @@ import Foundation
 import NamiCore
 
 public struct StudioSettings: Codable, Equatable, Sendable {
-    public var engine = "whisperkit"
+    public var engine = "fast"
     public var modelFolder = ""
     public var language = "en"
     public var vocabulary = ""
@@ -43,7 +43,7 @@ public struct StudioSettings: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        engine = try values.decodeIfPresent(String.self, forKey: .engine) ?? "whisperkit"
+        engine = try values.decodeIfPresent(String.self, forKey: .engine) ?? "fast"
         modelFolder = try values.decodeIfPresent(String.self, forKey: .modelFolder) ?? ""
         language = try values.decodeIfPresent(String.self, forKey: .language) ?? "en"
         vocabulary = try values.decodeIfPresent(String.self, forKey: .vocabulary) ?? ""
@@ -85,7 +85,19 @@ public struct StudioSettings: Codable, Equatable, Sendable {
         result.modelFolder = json["modelFolder"] as? String ?? result.modelFolder
         result.modelFolder = resolve(result.modelFolder, project: project)
         result.audioDirectory = resolve(result.audioDirectory, project: project)
+        result.normalizeForDictation()
         return result
+    }
+
+    /// Applies only to app settings loaded from disk. Evaluation engine catalogs remain intact.
+    mutating func normalizeForDictation() {
+        // Never silently send local audio to a cloud provider during migration.
+        if engine != "fast" && engine != DictationProvider.groq.engineID { engine = "fast" }
+        cloudModels[DictationProvider.groq.rawValue] = nil
+        copyWhenFinished = true
+        pasteWhenFinished = true
+        // The removed server setup must not keep forwarding transcripts in the background.
+        if cleanupEngine == .server { cleanupEngine = .automatic }
     }
 
     public func save(project: URL) throws {

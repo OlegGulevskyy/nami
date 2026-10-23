@@ -19,7 +19,7 @@ struct FastDecodedAudio: Sendable {
     }
     private let preparePrimary: @Sendable () async throws -> Void
     private let decodePrimary: @Sendable ([Float], String?) async throws -> FastDecodedAudio
-    private let verifier: any TranscriptionEngine
+    private let verifier: (any TranscriptionEngine)?
     private var prepared = false
     private var buffer = AudioSessionBuffer()
     private var language: String?
@@ -36,14 +36,14 @@ struct FastDecodedAudio: Sendable {
     // A coalesced full-context preview every 300 ms; no unbounded decode queue.
     private let previewSamples = 4_800
 
-    public convenience init(modelFolder: String = FastTranscriptionEngine.modelDirectory.path, verifier: any TranscriptionEngine) {
+    public convenience init(modelFolder: String = FastTranscriptionEngine.modelDirectory.path, verifier: (any TranscriptionEngine)? = nil) {
         let runtime = ParakeetRuntime(folder: URL(fileURLWithPath: modelFolder))
         self.init(verifier: verifier, prepare: { try await runtime.prepare() }, decode: { audio, language in
             try await runtime.decode(audio, language: language)
         })
     }
 
-    init(verifier: any TranscriptionEngine, prepare: @escaping @Sendable () async throws -> Void,
+    init(verifier: (any TranscriptionEngine)? = nil, prepare: @escaping @Sendable () async throws -> Void,
          decode: @escaping @Sendable ([Float], String?) async throws -> FastDecodedAudio) {
         self.verifier = verifier; self.preparePrimary = prepare; self.decodePrimary = decode
     }
@@ -55,13 +55,13 @@ struct FastDecodedAudio: Sendable {
 
     public func setPromptObserver(_ observer: ModelPromptObserver?) async {
         self.observer = observer
-        await verifier.setPromptObserver(observer)
+        await verifier?.setPromptObserver(observer)
     }
 
     public func prepare() async throws {
         guard !prepared else { return }
         try await preparePrimary()
-        try await verifier.prepare()
+        try await verifier?.prepare()
         try Task.checkCancellation()
         prepared = true
     }
@@ -69,6 +69,9 @@ struct FastDecodedAudio: Sendable {
     public func start(sessionID: UUID, language: String?, vocabulary: String, onPartial: (@Sendable (String) -> Void)?) async throws {
         guard prepared else { throw EngineError.notPrepared }
         guard inference == nil else { throw EngineError.invalidState }
+        if verifier == nil, let language, !RecognitionReview.supportedLanguages.contains(language) {
+            throw EngineError.transcriptionFailed("Parakeet does not support the selected language. Choose Groq in Settings → Models or change the transcription language.")
+        }
         try buffer.start(sessionID)
         activeID = sessionID
         live = false; liveAudio = []; latest = nil; partialFailed = false
@@ -95,7 +98,7 @@ struct FastDecodedAudio: Sendable {
                     let result = try await self.decodePrimary(audio, self.language)
                     try Task.checkCancellation()
                     self.latest = (audio.count, result)
-                    if RecognitionReview.reason(for: result, vocabulary: self.vocabulary) == nil {
+                    if self.verifier == nil || RecognitionReview.reason(for: result, vocabulary: self.vocabulary) == nil {
                         self.partial?(RecognitionReview.canonicalCase(result.text, vocabulary: self.vocabulary))
                     }
                 } catch { self.partialFailed = true; return }
@@ -115,14 +118,14 @@ struct FastDecodedAudio: Sendable {
             await partialWorker?.value
             try Task.checkCancellation()
             let text: String
-            if let language, !RecognitionReview.supportedLanguages.contains(language) {
+            if let verifier, let language, !RecognitionReview.supportedLanguages.contains(language) {
                 try await verifier.start(sessionID: sessionID, language: language, vocabulary: vocabulary, onPartial: nil)
                 try await verifier.append(AudioChunk(samples: audio, timestamp: 0), sessionID: sessionID)
                 text = try await verifier.finish(sessionID: sessionID)
             } else {
                 let record = ModelPromptRecord(requestID: sessionID, provider: "Parakeet Ultra",
                     messages: [.init(role: "vocabulary", content: vocabulary)],
-                    details: "Complete utterance · on-device · uncertain vocabulary and acronyms checked with Whisper")
+                    details: verifier == nil ? "Complete utterance · on-device" : "Complete utterance · on-device · uncertain vocabulary and acronyms checked with Whisper")
                 await observer?(record)
                 let start = ContinuousClock.now
                 let result: FastDecodedAudio
@@ -137,8 +140,8 @@ struct FastDecodedAudio: Sendable {
                 try Task.checkCancellation()
                 let review = RecognitionReview.reason(for: result, vocabulary: vocabulary)
                 await observer?(record.responding(.init(output: result.text, seconds: start.secondsElapsed,
-                    details: review.map { "Whisper verification: " + $0 } ?? "Full utterance recognized")))
-                if review != nil {
+                    details: verifier == nil ? "Full utterance recognized" : (review.map { "Whisper verification: " + $0 } ?? "Full utterance recognized"))))
+                if review != nil, let verifier {
                     try await verifier.start(sessionID: sessionID, language: language, vocabulary: vocabulary, onPartial: nil)
                     try await verifier.append(AudioChunk(samples: audio, timestamp: 0), sessionID: sessionID)
                     text = try await verifier.finish(sessionID: sessionID)
@@ -158,7 +161,7 @@ struct FastDecodedAudio: Sendable {
             return text
         } catch {
             buffer.cancel(sessionID)
-            await verifier.cancel(sessionID: sessionID)
+            await verifier?.cancel(sessionID: sessionID)
             if error is CancellationError { throw EngineError.cancelled }
             throw error
         }
@@ -172,7 +175,7 @@ struct FastDecodedAudio: Sendable {
         inference?.cancel()
         await partialWorker?.value
         liveAudio = []; latest = nil; partial = nil
-        await verifier.cancel(sessionID: sessionID)
+        await verifier?.cancel(sessionID: sessionID)
         _ = await inference?.result
     }
 }

@@ -235,6 +235,7 @@ public final class StudioSession {
                 if provider == .soniox { return SonioxDictationEngine(configuration: configuration) }
                 return DictationFileEngine(client: DictationFileClient(configuration: configuration))
             }
+            if settings.engine == "fast" { return FastTranscriptionEngine() }
             if settings.engine == "server" {
                 guard let endpoint = serverConnection.endpoint else {
                     throw StudioError.message("Enter your Nami server's address in Models.")
@@ -343,7 +344,7 @@ public final class StudioSession {
             return provider.title + " · " + options.cloudModel(for: provider)
         }
         return switch options.engine {
-        case "fast": "Parakeet Ultra · Whisper verification"
+        case "fast": "Parakeet"
         case "server": "Nami server · " + (NamiServerEndpoint(address: options.serverURL)?.displayName ?? "no address")
         default: URL(fileURLWithPath: options.modelFolder).lastPathComponent
         }
@@ -393,9 +394,16 @@ public final class StudioSession {
         if settings.cleanupEnabled { cleanupService.prewarm(settings.cleanupEngine) }
     }
 
+    /// A download can repair an earlier failed preparation without changing the selection.
+    func prepareInstalledParakeet() {
+        guard settings.engine == "fast", !phase.busy, !modelMaintenance, !permissions.needsSetup else { return }
+        do { _ = try preparationFor(settings, retryFailure: true) }
+        catch { modelPreparationError = error.localizedDescription }
+    }
+
     private func prepareInBackground() {
         guard !modelMaintenance else { return }
-        guard DictationProvider(engineID: settings.engine) != nil || ["fake", "server"].contains(settings.engine) || !settings.modelFolder.isEmpty else { return }
+        guard DictationProvider(engineID: settings.engine) != nil || ["fast", "fake", "server"].contains(settings.engine) || !settings.modelFolder.isEmpty else { return }
         do { _ = try preparationFor(settings) }
         catch { modelPreparationError = error.localizedDescription }
     }
@@ -405,7 +413,7 @@ public final class StudioSession {
     private func permissionsReady() -> Bool {
         refreshPermissions()
         guard !permissions.needsSetup else {
-            status = "Allow Microphone and Input Monitoring to use Nami."
+            status = "Allow Microphone, Input Monitoring, and Accessibility to use Nami."
             NSApp?.activate(ignoringOtherApps: true)
             return false
         }
@@ -1170,7 +1178,8 @@ public final class StudioSession {
             await preparation?.cancelAndWait()
             preparation = nil; preparationID = UUID(); engine = nil; engineKey = ""
             modelLoaded = false; modelPreparing = false; modelPreparationError = nil
-            var updated = settings; updated.engine = "whisperkit"
+            // Keep the local selection after deletion; never switch to a paid cloud provider.
+            var updated = settings; updated.engine = "fast"
             try updated.save(project: project)
             settings = updated
         }

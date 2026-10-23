@@ -5,12 +5,15 @@ import Testing
 @MainActor struct StudioSidebarTests {
     @Test func sidebarListsMainPagesFirstAndKeepsSettingsSectionsInTabs() {
         typealias Page = StudioView.Page
-        #expect(Page.primary == [.history, .snippets, .actions])
-        #expect(Page.secondary == [.debugging, .settings])
+        #expect(Page.primary == [.history, .vocabulary, .snippets, .actions])
+        #expect(Page.secondary == [.settings])
+        #expect(Page.settingsTabs == [.settings, .shortcuts, .model])
         // Every page is reachable from the sidebar or the Settings tabs.
         #expect(Set(Page.primary + Page.secondary + Page.settingsTabs) == Set(Page.allCases))
         #expect(Page.settingsTabs.allSatisfy { $0.settingsPage != nil && $0.sidebarPage == .settings })
-        #expect((Page.primary + [.debugging]).map(\.shortcutKey) == Array("1234"))
+        #expect(Page.primary.map(\.shortcutKey) == Array("1234"))
+        #expect(Page.vocabulary.settingsPage == nil)
+        #expect(Page.vocabulary.sidebarPage == .vocabulary)
         #expect(Page.settingsTabs.allSatisfy { $0.shortcutKey == nil })
         #expect(Page.settings.shortcutLabel == "⌘,")
         for page in Page.allCases {

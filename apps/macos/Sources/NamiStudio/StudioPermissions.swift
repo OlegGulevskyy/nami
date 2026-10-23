@@ -24,7 +24,7 @@ public final class StudioPermissions {
     public private(set) var accessibility = false
     public private(set) var requestingMicrophone = false
     public private(set) var settingsError: String?
-    public var needsSetup: Bool { microphone != .authorized || !inputMonitoring }
+    public var needsSetup: Bool { microphone != .authorized || !inputMonitoring || !accessibility }
 
     @ObservationIgnored private let microphoneStatus: @MainActor () -> AVAuthorizationStatus
     @ObservationIgnored private let inputMonitoringStatus: @MainActor () -> Bool

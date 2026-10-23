@@ -16,7 +16,7 @@ import NamiCore
     defer { try? FileManager.default.removeItem(at: project) }
     let capture = FixtureCapture(samples: audio)
     let permissions = StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
-        accessibilityStatus: { false }, requestAccessibility: { false },
+        accessibilityStatus: { true }, requestAccessibility: { false },
         requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),
         permissions: permissions, pastePreparer: { { _, _ in .targetUnavailable } }, captureBuilder: { _ in capture },

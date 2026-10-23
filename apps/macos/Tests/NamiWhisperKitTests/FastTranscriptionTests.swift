@@ -105,3 +105,29 @@ private actor PreviewDecodes {
     #expect(try await engine.finish(sessionID: id) == "Schedule Tuesday.")
     #expect(await decodes.lengths == [4_800, 5_700])
 }
+
+@Test @MainActor func standaloneParakeetRecognizesWithoutWhisperEvenWhenConfidenceIsLow() async throws {
+    let engine = FastTranscriptionEngine(prepare: {}, decode: { audio, _ in
+        #expect(audio == [0.1, 0.2])
+        return .init(text: "Use gpt for sheets.", words: [], confidence: 0.5)
+    })
+    try await engine.prepare()
+    let id = UUID()
+    try await engine.start(sessionID: id, language: "en", vocabulary: "GPT for Sheets", onPartial: nil)
+    try await engine.append(.init(samples: [0.1, 0.2], timestamp: 0), sessionID: id)
+    #expect(try await engine.finish(sessionID: id) == "Use GPT for Sheets.")
+}
+
+@Test @MainActor func standaloneParakeetRejectsUnsupportedLanguageAndRemainsReusable() async throws {
+    let engine = FastTranscriptionEngine(prepare: {}, decode: { _, _ in
+        .init(text: "Ready again.", words: [], confidence: 1)
+    })
+    try await engine.prepare()
+    await #expect(throws: (any Error).self) {
+        try await engine.start(sessionID: UUID(), language: "ja", vocabulary: "", onPartial: nil)
+    }
+    let next = UUID()
+    try await engine.start(sessionID: next, language: "en", vocabulary: "", onPartial: nil)
+    try await engine.append(.init(samples: [0.1], timestamp: 0), sessionID: next)
+    #expect(try await engine.finish(sessionID: next) == "Ready again.")
+}

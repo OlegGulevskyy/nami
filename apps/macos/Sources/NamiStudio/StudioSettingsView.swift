@@ -5,7 +5,7 @@ import SwiftUI
 
 public struct StudioSettingsView: View {
     public enum Page: String, CaseIterable {
-        case general = "General", shortcuts = "Shortcuts", model = "Models", about = "About"
+        case general = "General", shortcuts = "Shortcuts", model = "Models"
     }
 
     @Bindable private var session: StudioSession
@@ -20,6 +20,7 @@ public struct StudioSettingsView: View {
     @State private var skillStatuses: [String: AgentSkillStatus] = [:]
     @State private var skillConfirmation: SkillConfirmation?
     @State private var skillsError: String?
+    @State private var showingShortcutHelp = false
 
     public init(session: StudioSession, page: Page = .general) {
         self.session = session
@@ -31,16 +32,13 @@ public struct StudioSettingsView: View {
         Group {
             if page == .model {
                 ModelsView(session: session)
-            } else if page == .about {
-                about
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 40) {
+                    VStack(alignment: .leading, spacing: 28) {
                         switch page {
                         case .general: general
                         case .shortcuts: shortcuts
                         case .model: EmptyView()
-                        case .about: EmptyView()
                         }
                         if let error = session.errorMessage {
                             Label(error, systemImage: "exclamationmark.circle")
@@ -61,7 +59,6 @@ public struct StudioSettingsView: View {
     }
 
     @ViewBuilder private var general: some View {
-        Text("Changes save automatically.").font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
         section("Recording") {
             Group {
                 row("Microphone") {
@@ -87,7 +84,7 @@ public struct StudioSettingsView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "mic").font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
                         Slider(value: Binding(get: { volume }, set: { session.setInputVolume($0) }), in: 0...1)
-                            .frame(width: 180).tint(StudioStyle.green)
+                            .frame(width: 180).tint(StudioStyle.accent)
                             .accessibilityLabel("Input volume")
                         Text("\(Int((volume * 100).rounded()))%").font(.system(size: 13).monospacedDigit())
                             .foregroundStyle(StudioStyle.quiet).frame(width: 40, alignment: .trailing)
@@ -109,60 +106,21 @@ public struct StudioSettingsView: View {
                 } label: { Text(languages.first { $0.code == session.settings.language }?.name ?? session.settings.language) }
                     .preferenceMenu().accessibilityLabel("Transcription language")
             }
-            Text("Vocabulary").font(.system(size: 15)).padding(.top, 8)
-            Text("Help Nami recognize names and technical terms. Separate them with commas or new lines.")
-                .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-                .fixedSize(horizontal: false, vertical: true).padding(.top, 3).padding(.bottom, 8)
-            TextEditor(text: $session.settings.vocabulary)
-                .font(.system(size: 14)).lineSpacing(4).scrollContentBackground(.hidden)
-                .padding(8).frame(height: 76)
-                .background(StudioStyle.paper, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(StudioStyle.line))
-                .accessibilityLabel("Vocabulary")
-                .help("For example: Nami, Oleg, WhisperKit, PostHog, TypeScript.")
-            Text("Applies to your next transcription. Keep it short; long lists use only the last terms. Clear to disable hints.")
-                .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-                .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
-        }.disabled(session.phase.busy)
-        section("Clipboard") {
-            row("Copy when finished", subtitle: "Keep the transcript on your clipboard. Turn off to preserve what you copied.") {
-                Toggle("Copy when finished", isOn: $session.settings.copyWhenFinished).labelsHidden().toggleStyle(StudioToggleStyle())
-            }
-            row("Paste automatically", subtitle: "Insert recordings at your cursor in another app, even when copying is off.") {
-                Toggle("Paste automatically", isOn: $session.settings.pasteWhenFinished)
-                    .labelsHidden().toggleStyle(StudioToggleStyle())
-            }
-            row("Quote highlighted text", subtitle: "Highlight text in any app while you talk. The “this” or “that” you say about it becomes that text in quotes. In Google Docs, Nami copies the selection, then restores your clipboard. Needs Accessibility.") {
+            row("Quote highlighted text", subtitle: "Replace “this” or “that” with the text you highlight while recording.") {
                 Toggle("Quote highlighted text", isOn: $session.settings.quoteHighlights)
                     .labelsHidden().toggleStyle(StudioToggleStyle())
-            }
-            if session.settings.pasteWhenFinished {
-                row("Accessibility", subtitle: session.permissions.accessibility
-                    ? "Ready to paste into the focused app."
-                    : "Allow Nami to paste for you. Transcripts are always available in history.") {
-                    if session.permissions.accessibility {
-                        Label("Allowed", systemImage: "checkmark.circle").font(.system(size: 13))
-                    } else {
-                        Button("Allow Accessibility…", action: session.permissions.resolveAccessibility)
-                            .buttonStyle(.plain).preferenceControl()
-                    }
-                }
-                if let error = session.permissions.settingsError {
-                    Text(error).font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-                }
+                    .help("In Google Docs, Nami briefly copies the selection, then restores your clipboard.")
             }
         }.disabled(session.phase.busy)
         section("Permissions") {
-            VStack(alignment: .leading, spacing: 20) {
-                permissions
-            }
+            permissions
         }
         section("History") {
-            row("Recording history", subtitle: "All recordings and transcripts stay on this Mac. Nothing is automatically deleted.") {
+            row("Recording history") {
                 Button("Show folder") { NSWorkspace.shared.open(session.historyDirectory) }
                     .buttonStyle(.plain).preferenceControl()
             }
-            row("Save extra audio copies", subtitle: "Also save microphone audio in a folder you choose.") {
+            row("Save extra audio copies") {
                 Toggle("Save extra audio copies", isOn: $session.settings.saveAudio).labelsHidden().toggleStyle(StudioToggleStyle())
             }
             if session.settings.saveAudio {
@@ -189,7 +147,7 @@ public struct StudioSettingsView: View {
                     .preferenceMenu()
                     .accessibilityLabel("Theme: \(session.settings.appearance.title)")
             }
-            row("Transcript font", subtitle: "Used for your transcription history.") {
+            row("Transcript font") {
                 Menu {
                     ForEach(TranscriptFont.allCases, id: \.self) { typeface in
                         Button {
@@ -207,8 +165,6 @@ public struct StudioSettingsView: View {
                     .accessibilityLabel("Transcript font: \(session.settings.transcriptFont.title)")
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Preview")
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(StudioStyle.quiet)
                 Text("A thought worth keeping. Let’s meet at 10:30, share a few ideas, and make something great together.")
                     .font(session.settings.transcriptFont.font).lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -235,9 +191,6 @@ public struct StudioSettingsView: View {
             updateSettings
         }
         section("Agent skills") {
-            Text("Teach Claude Code and other coding agents to manage your snippets and actions.")
-                .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-                .fixedSize(horizontal: false, vertical: true).padding(.bottom, 4)
             row("Install to", subtitle: (skillsFolder.path as NSString).abbreviatingWithTildeInPath) {
                 Menu {
                     Button("Claude Code") { session.settings.skillsFolder = "" }
@@ -274,7 +227,7 @@ public struct StudioSettingsView: View {
 
     private func skillRow(_ skill: AgentSkill) -> some View {
         let status = skillStatuses[skill.name] ?? .notInstalled
-        return row(skill.title, subtitle: "\(skill.name) · \(skillStatusText(status, bundled: skill.version))") {
+        return row(skill.title, subtitle: skillDetail(status, bundled: skill.version)) {
             HStack(spacing: 14) {
                 switch status {
                 case .notInstalled:
@@ -288,7 +241,7 @@ public struct StudioSettingsView: View {
                         .buttonStyle(.plain).preferenceControl().accessibilityLabel("Reinstall \(skill.name)")
                 case .current:
                     Label("Installed", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 12)).foregroundStyle(StudioStyle.green)
+                        .font(.system(size: 12)).foregroundStyle(StudioStyle.accent)
                 }
                 if status != .notInstalled {
                     Button { skillConfirmation = .remove(skill) } label: { Image(systemName: "trash") }
@@ -300,13 +253,12 @@ public struct StudioSettingsView: View {
         }
     }
 
-    private func skillStatusText(_ status: AgentSkillStatus, bundled: Int) -> String {
+    private func skillDetail(_ status: AgentSkillStatus, bundled: Int) -> String? {
         switch status {
-        case .notInstalled: "Not installed"
-        case .current: "Version \(bundled), up to date"
-        case .outdated(let installed): "Version \(installed.map(String.init) ?? "unknown") installed, version \(bundled) available"
-        case .changed: "Version \(bundled), edited since it was installed or Nami has moved"
-        case .newer(let installed): "Version \(installed) from a newer Nami; this app has version \(bundled)"
+        case .notInstalled, .current: nil
+        case .outdated: "Version \(bundled) available"
+        case .changed: "Modified locally or installed from another location"
+        case .newer(let installed): "Version \(installed) installed; this app includes version \(bundled)"
         }
     }
 
@@ -342,30 +294,38 @@ public struct StudioSettingsView: View {
     }
 
     @ViewBuilder private var shortcuts: some View {
-        Text("All your shortcuts in one place. Click a shortcut field and press your new keys. Changes save automatically.")
-            .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-            .fixedSize(horizontal: false, vertical: true)
+        HStack {
+            Spacer()
+            Button { showingShortcutHelp.toggle() } label: {
+                Label("How it works", systemImage: "questionmark.circle")
+            }
+            .buttonStyle(.plain).preferenceControl()
+            .popover(isPresented: $showingShortcutHelp, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Shortcuts").font(.system(size: 13, weight: .semibold))
+                    Text("Press and release Option–Command twice within half a second to record, then once to finish. Turn taps off to assign your own recording shortcuts.")
+                    Text("To pin a destination, focus a text field and use Pin / unpin input. Your next transcript goes there. Press again to unpin.")
+                    Text("Click a shortcut to change its keys. Search, recording, and import shortcuts apply in History.")
+                }
+                .font(.system(size: 12)).frame(width: 320, alignment: .leading).padding(16)
+            }
+        }
         section("Pin input") {
             shortcutRow("Pin / unpin input", name: .pinDestination)
-            shortcutHelp("Focus a text field in any app, then press this shortcut to pin it for your next transcript. Press again to unpin. The pin is used once and works with either recording shortcut mode. Requires Accessibility.")
-            shortcutHelp("If the app cannot accept text in the background, Nami copies the transcript instead.")
         }.disabled(session.phase.busy)
         section("Recording") {
-            row("Use Option–Command taps", subtitle: "Press and release ⌥⌘ together. No letter or Space key needed.") {
+            row("Option–Command taps") {
                 Toggle("Use Option–Command taps", isOn: $modifierShortcut.enabled)
                     .labelsHidden().toggleStyle(StudioToggleStyle())
             }
             if session.modifierShortcut.enabled {
                 row("Start recording") { StudioKeycap(text: "⌥⌘ twice") }
                 row("Stop & transcribe") { StudioKeycap(text: "⌥⌘ once") }
-                shortcutHelp("Tap twice within half a second to start. Tap once while recording to finish.")
-                Label(session.modifierShortcut.message,
-                      systemImage: session.modifierShortcut.isListening ? "checkmark.circle" : "exclamationmark.circle")
-                    .font(.system(size: 12)).padding(.vertical, 8)
                 if !session.modifierShortcut.isListening {
+                    Label(session.modifierShortcut.message, systemImage: "exclamationmark.circle")
+                        .font(.system(size: 12)).padding(.vertical, 8)
                     Button("Allow Input Monitoring…", action: session.modifierShortcut.requestPermission)
                         .buttonStyle(.plain).preferenceControl()
-                    shortcutHelp("Enable Nami in System Settings → Privacy & Security → Input Monitoring. If already enabled, switch it off and back on, then quit and reopen Nami.")
                 }
             }
             StudioStyle.divider.padding(.vertical, 12)
@@ -374,20 +334,17 @@ public struct StudioSettingsView: View {
                 shortcutRow("Start recording", name: .startRecording)
                 shortcutRow("Stop & transcribe", name: .stopRecording)
             }.disabled(session.modifierShortcut.enabled)
-            shortcutHelp(session.modifierShortcut.enabled
-                ? "These key shortcuts are inactive while Option–Command taps are on. Turn taps off to edit and use them. Your saved shortcuts are kept."
-                : "Use modifiers plus a regular key. Start / stop toggles recording; the separate start and stop shortcuts are optional.")
+
         }.disabled(session.phase.busy)
         section("In Nami") {
-            shortcutHelp("Built-in shortcuts for the Nami window. These cannot be changed here.")
             ForEach(StudioView.Page.allCases.filter { $0.shortcutKey != nil }, id: \.self) { destination in
                 row("Show \(destination.rawValue)") { StudioKeycap(text: destination.shortcutLabel ?? "") }
             }
             row("Open Settings") { StudioKeycap(text: "⌘,") }
-            row("Search transcripts", subtitle: "In History") { StudioKeycap(text: "⌘F") }
-            row("Start / stop recording", subtitle: "In History") { StudioKeycap(text: "⌘R") }
-            row("Import audio", subtitle: "In History") { StudioKeycap(text: "⌘O") }
-            row("Go back / cancel", subtitle: "Return to History, close search, or cancel the current task.") {
+            row("Search transcripts") { StudioKeycap(text: "⌘F") }
+            row("Start / stop recording") { StudioKeycap(text: "⌘R") }
+            row("Import audio") { StudioKeycap(text: "⌘O") }
+            row("Go back / cancel") {
                 StudioKeycap(text: "Esc")
             }
         }
@@ -406,28 +363,22 @@ public struct StudioSettingsView: View {
         }
     }
 
-    private func shortcutHelp(_ text: String) -> some View {
-        Text(text).font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-            .fixedSize(horizontal: false, vertical: true).lineSpacing(2).padding(.vertical, 6)
-    }
-
     @ViewBuilder private var permissions: some View {
-        Text("See what Nami can access. You can turn permissions off or on in System Settings.")
-            .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-            .fixedSize(horizontal: false, vertical: true)
         VStack(spacing: 0) {
             permissionRow(.microphone, icon: "mic", detail: microphonePermissionDetail,
                           granted: session.permissions.microphone == .authorized,
                           status: microphonePermissionStatus) {
                 Task { await session.permissions.resolveMicrophone() }
             }
+            StudioStyle.divider
             permissionRow(.inputMonitoring, icon: "keyboard",
-                          detail: "Use the recording shortcut while you’re in another app. Required for Nami.",
+                          detail: "Use recording shortcuts in other apps.",
                           granted: session.permissions.inputMonitoring) {
                 session.permissions.resolveInputMonitoring()
             }
+            StudioStyle.divider
             permissionRow(.accessibility, icon: "hand.point.up.left",
-                          detail: "Paste finished transcripts at your cursor. Optional; copying works without it.",
+                          detail: "Paste transcripts automatically into your text field.",
                           granted: session.permissions.accessibility) {
                 session.permissions.resolveAccessibility()
             }
@@ -436,20 +387,14 @@ public struct StudioSettingsView: View {
         if let error = session.permissions.settingsError {
             Label(error, systemImage: "exclamationmark.circle")
                 .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
         }
-        VStack(alignment: .leading, spacing: 12) {
-            Text("To revoke access, choose Manage… and turn Nami off. You can turn it back on in the same place. Follow any restart prompt from macOS.")
-            Text("Permissions refresh automatically when you return to Nami.")
-        }
-        .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var microphonePermissionStatus: String {
         switch session.permissions.microphone {
         case .authorized: "Allowed"
-        case .notDetermined: "Not requested"
+        case .notDetermined: "Required"
         case .restricted: "Restricted"
         default: "Not allowed"
         }
@@ -458,65 +403,49 @@ public struct StudioSettingsView: View {
     private var microphonePermissionDetail: String {
         session.permissions.microphone == .restricted
             ? "Access is restricted on this Mac. Contact your administrator to change it."
-            : "Record your voice for on-device transcription. Required for Nami."
+            : "Record your voice."
     }
 
     private func permissionRow(_ pane: StudioPermissions.Pane, icon: String, detail: String,
                                granted: Bool, status: String? = nil, allow: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Label(pane.title, systemImage: icon).font(.system(size: 15, weight: .medium))
-                Spacer()
-                Label(status ?? (granted ? "Allowed" : "Not allowed"),
-                      systemImage: granted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 12)).foregroundStyle(granted ? StudioStyle.green : StudioStyle.quiet)
-            }
-            Text(detail).font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 12) {
-                if !granted && !(pane == .microphone && session.permissions.microphone == .restricted) {
-                    Button(pane == .microphone && session.permissions.requestingMicrophone ? "Waiting for macOS…" : "Allow…", action: allow)
-                        .buttonStyle(.plain).preferenceControl()
-                        .accessibilityLabel("Allow \(pane.title)")
+        let restricted = pane == .microphone && session.permissions.microphone == .restricted
+        return HStack(spacing: 16) {
+            Image(systemName: icon).font(.system(size: 17)).foregroundStyle(StudioStyle.quiet)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(pane.title).font(.system(size: 15))
+                if !granted {
+                    Text(detail).font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            Spacer(minLength: 8)
+            Label(status ?? (granted ? "Allowed" : "Required"),
+                  systemImage: granted ? "checkmark.circle" : "circle")
+                .font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
+                .fixedSize()
+            if granted || restricted {
                 Button("Manage…") { session.permissions.showSettings(pane) }
                     .buttonStyle(.plain).preferenceControl()
-                    .help("Change \(pane.title) access in System Settings")
                     .accessibilityLabel("Manage \(pane.title) in System Settings")
-            }
-            StudioStyle.divider.padding(.top, 6)
-        }
-        .padding(.bottom, 20)
-    }
-
-    @ViewBuilder private var about: some View {
-        VStack(spacing: 8) {
-            Text("nami").font(.system(size: 32, weight: .semibold, design: .rounded)).tracking(-1)
-            Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown")")
-                .font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-            if let updates = session.updates {
-                Button("Check for Updates…", action: updates.checkForUpdates)
-                    .buttonStyle(.plain).preferenceControl().padding(.top, 12)
-                    .disabled(!updates.canCheckForUpdates || session.busyForUpdate)
-                if let status = updates.status {
-                    Text(status).font(.system(size: 12)).foregroundStyle(StudioStyle.quiet)
-                        .multilineTextAlignment(.center)
-                }
+            } else {
+                Button(pane == .microphone && session.permissions.requestingMicrophone ? "Waiting…" : "Allow…", action: allow)
+                    .buttonStyle(.plain).preferenceControl()
+                    .accessibilityLabel("Allow \(pane.title)")
             }
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 12)
     }
 
     @ViewBuilder private var updateSettings: some View {
         if let updates = session.updates {
-            row("Check for updates automatically", subtitle: "Check daily. You choose when to download and install.") {
+            row("Check for updates automatically") {
                 Toggle("Check for updates automatically", isOn: Binding(
                     get: { updates.automaticallyChecks }, set: { updates.setAutomaticallyChecks($0) }
                 )).labelsHidden().toggleStyle(StudioToggleStyle()).disabled(!updates.available)
             }
             row("Software updates", subtitle: updates.status ?? (session.busyForUpdate
-                ? "Available after the current task finishes." : "Keep Nami up to date.")) {
+                ? "Available after the current task finishes." : nil)) {
                 Button("Check for Updates…", action: updates.checkForUpdates)
                     .buttonStyle(.plain).preferenceControl()
                     .disabled(!updates.canCheckForUpdates || session.busyForUpdate)
@@ -530,19 +459,15 @@ public struct StudioSettingsView: View {
     private var languages: [(code: String, name: String)] {
         [("auto", "Auto-detect"), ("en", "English"), ("fr", "French"), ("uk", "Ukrainian"), ("ru", "Russian"), ("es", "Spanish"), ("de", "German")]
     }
-    private func heading(_ title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(size: 28, weight: .medium)).tracking(-0.4)
-            Text(subtitle).font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
-        }.padding(.bottom, 3)
-    }
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             StudioSectionHeader(title: title).padding(.bottom, 10)
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }
-            .padding(.leading, 24)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(StudioStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StudioStyle.line))
         }
     }
     private func row<Control: View>(_ title: String, subtitle: String? = nil, @ViewBuilder control: () -> Control) -> some View {
@@ -557,11 +482,6 @@ public struct StudioSettingsView: View {
             Spacer(minLength: 8)
             control().fixedSize()
         }.padding(.vertical, 8).frame(minHeight: 44)
-    }
-    private func chooseModel() {
-        let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
-        panel.message = "Choose the downloaded WhisperKit model folder."
-        if panel.runModal() == .OK, let url = panel.url { session.settings.modelFolder = url.path }
     }
     private func chooseAudioFolder() {
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
@@ -582,11 +502,12 @@ public struct StudioSettingsView: View {
     private func refresh() {
         switch page {
         case .general:
+            session.permissions.refresh()
             session.refreshInput()
             Task { loginStatus = await Task.detached { SMAppService.mainApp.status }.value }
             refreshSkills()
         case .shortcuts: session.modifierShortcut.refresh()
-        case .model, .about: break
+        case .model: break
         }
     }
 
@@ -602,7 +523,7 @@ public struct StudioSettingsView: View {
 
 extension View {
     @ViewBuilder func preferenceControl() -> some View {
-        let control = font(.system(size: 13)).foregroundStyle(StudioStyle.green)
+        let control = font(.system(size: 13)).foregroundStyle(StudioStyle.accent)
             .padding(.horizontal, 11).frame(minHeight: 32)
         if #available(macOS 26, *) {
             control.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 7))

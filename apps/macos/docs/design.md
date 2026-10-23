@@ -12,7 +12,7 @@ touch them.
 - **Put explanations behind one click.** Explain the page in a **How it works**
   button (`questionmark.circle`) at the top right. Clicking it opens a popover of
   about 320 pt: a bold title, three to five short sentences, and at most one
-  example in `StudioStyle.green`. Don't rely on hover tooltips to explain things.
+  example in `StudioStyle.accent`. Don't rely on hover tooltips to explain things.
 - **Lists are read-only until you choose Edit.** Rows show their content as
   plain text. Each row has pencil (`pencil`) and delete (`trash`) icons on the
   right. Clicking a row never starts editing.
@@ -52,7 +52,7 @@ dark mode.
 | Control labels | 15 pt, `ink` |
 | Popover text | 12 pt, `ink` |
 | Icons and quiet actions (Cancel) | `quiet` |
-| Primary actions, links, examples | `green` |
+| Primary actions, links, examples | `accent` |
 | Errors | 12 pt red `Label` with `exclamationmark.circle`, only when something failed |
 
 Text fields use a plain style on `paper`, with an 8 pt rounded `line` border and

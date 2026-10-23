@@ -757,7 +757,9 @@ private func projectDirectory() throws -> URL {
 
     // No SwiftUI view or explicit save call: even quitting immediately must work.
     let reopened = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: allowedPermissions(), pastePreparer: { { _, _ in .targetUnavailable } }, captureBuilder: { _ in TestCapture() }, inputDevicesProvider: { microphones }, clipboardWriter: { _ in true })
-    #expect(reopened.settings == session.settings)
+    var expectedSettings = session.settings
+    expectedSettings.normalizeForDictation()
+    #expect(reopened.settings == expectedSettings)
     #expect(reopened.inputName == "USB microphone")
     #expect(!reopened.selectedMicrophoneUnavailable)
     #expect(reopened.errorMessage == nil)
@@ -815,7 +817,7 @@ private func projectDirectory() throws -> URL {
     let restored = try StudioSettings.load(project: project)
     #expect(restored.microphoneUID == nil)
     #expect(restored.vocabulary.isEmpty)
-    #expect(restored.engine == "fake")
+    #expect(restored.engine == "fast")
     #expect(restored.language == "fr")
     #expect(restored.saveAudio)
     #expect(restored.audioDirectory == project.appendingPathComponent("recordings").path)
@@ -1034,7 +1036,7 @@ private func projectDirectory() throws -> URL {
     #expect(copies.isEmpty)
     #expect(pastes == 1)
     #expect(session.status == TranscriptPasteResult.sent.status(copied: false))
-    #expect(try StudioSettings.load(project: project).copyWhenFinished == false)
+    #expect(try StudioSettings.load(project: project).copyWhenFinished == true)
     #expect(session.copyTranscript())
     #expect(copies == [engine.transcript])
 }
@@ -1077,7 +1079,7 @@ private func projectDirectory() throws -> URL {
     #expect(events == ["capture focus", "copy", "paste", "copy"])
 }
 
-@Test(arguments: [false, true]) @MainActor func disablingPasteRespectsCopySettingAndPersists(copyWhenFinished: Bool) async throws {
+@Test(arguments: [false, true]) @MainActor func transientPasteOverrideRespectsCopySettingAndResetsOnReload(copyWhenFinished: Bool) async throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     let engine = TestEngine(), capture = TestCapture()
     var copies = 0
@@ -1094,7 +1096,7 @@ private func projectDirectory() throws -> URL {
     session.stopRecording()
     try await waitUntil { !session.phase.busy }
     #expect(copies == (copyWhenFinished ? 1 : 0))
-    #expect(!((try StudioSettings.load(project: project)).pasteWhenFinished))
+    #expect((try StudioSettings.load(project: project)).pasteWhenFinished)
 }
 
 @Test @MainActor func importsCopyWithoutInspectingFocusOrPasting() async throws {
@@ -1136,15 +1138,17 @@ private func projectDirectory() throws -> URL {
 
 @MainActor private func allowedPermissions() -> StudioPermissions {
     StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
+                      accessibilityStatus: { true }, requestAccessibility: { false },
                       requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
 }
 
 @Test @MainActor func missingPermissionsBlockRecordingShortcutsAndImportBeforeModelPreparation() async throws {
     let project = try projectDirectory(); defer { try? FileManager.default.removeItem(at: project) }
     for microphone: AVAuthorizationStatus in [.notDetermined, .denied, .restricted, .authorized] {
-        for inputMonitoring in [false, true] where microphone != .authorized || !inputMonitoring {
+        for (inputMonitoring, accessibility) in [(false, false), (false, true), (true, false), (true, true)] where microphone != .authorized || !inputMonitoring || !accessibility {
             let engine = TestEngine(), capture = TestCapture()
             let permissions = StudioPermissions(microphoneStatus: { microphone }, inputMonitoringStatus: { inputMonitoring },
+                accessibilityStatus: { accessibility }, requestAccessibility: { false },
                 requestMicrophone: { Issue.record("Recording must not request permission implicitly"); return false },
                 requestInputMonitoring: { Issue.record("Recording must not request permission implicitly"); return false },
                 openSettings: { _ in Issue.record("Recording must not open settings implicitly"); return false })
@@ -1168,6 +1172,7 @@ private func projectDirectory() throws -> URL {
     let state = TestPermissionState()
     state.microphone = .denied
     let permissions = StudioPermissions(microphoneStatus: { state.microphone }, inputMonitoringStatus: { true },
+        accessibilityStatus: { true }, requestAccessibility: { false },
         requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: permissions,
         pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
@@ -1193,6 +1198,7 @@ private func projectDirectory() throws -> URL {
     engine.prepareDelay = .milliseconds(50)
     let state = TestPermissionState()
     let permissions = StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { state.inputMonitoring },
+        accessibilityStatus: { true }, requestAccessibility: { false },
         requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"), permissions: permissions,
         pastePreparer: { { _, _ in .targetUnavailable } }, engineBuilder: { _ in engine }, captureBuilder: { _ in capture }, clipboardWriter: { _ in true })
@@ -1565,6 +1571,7 @@ private func projectDirectory() throws -> URL {
     let engine = TestEngine(), capture = TestCapture(), state = TestPermissionState()
     state.microphone = .denied
     let permissions = StudioPermissions(microphoneStatus: { state.microphone }, inputMonitoringStatus: { true },
+        accessibilityStatus: { true }, requestAccessibility: { false },
         requestMicrophone: { Issue.record("Warmup must not request microphone access"); return false },
         requestInputMonitoring: { false }, openSettings: { _ in false })
     let session = StudioSession(project: project, historyDirectory: project.appendingPathComponent("history"),

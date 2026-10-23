@@ -120,7 +120,7 @@ struct SnippetsView: View {
             Text("How snippets work").font(.system(size: 13, weight: .semibold))
             Text("Say a trigger word, one of a snippet’s phrases, then the details. Nami pastes the snippet’s text instead of your words.")
             Text("“free env snippet for Excel add-in, Users API”")
-                .foregroundStyle(StudioStyle.green)
+                .foregroundStyle(StudioStyle.accent)
             Text("Phrases are separated by commas. In the text, {{ }} marks where details go, e.g. {{apps}}. One placeholder gets every detail, joined with commas; several are filled in order.")
             Text("Matching is word for word, not translated: for each language, add a trigger word and phrases as you say them, e.g. “snippet, сниппет”.")
             Text("Recordings without a trigger word are pasted as usual. Leave it empty to turn snippets off.")

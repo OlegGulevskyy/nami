@@ -33,8 +33,6 @@ private struct RespondingProcessor: TextProcessor {
     #expect(record.response?.output == "Hello there.")
     #expect(record.response?.outputTokensPerSecond == 25)
     #expect(record.outcome?.outcome == "cleaned" && record.outcome?.text == "Hello there.")
-    #expect(PromptsView.status(record).hasPrefix("cleaned · "))
-    #expect(PromptsView.stats(record).contains { $0 == ("Output speed", "25.0 tok/s") })
 
     let restored = PromptStore(directory: directory)
     #expect(restored.records.first?.response == record.response)
@@ -70,5 +68,4 @@ private struct RespondingProcessor: TextProcessor {
     let store = PromptStore(directory: directory)
     #expect(store.records.count == 1)
     #expect(store.records.first?.response == nil)
-    #expect(PromptsView.status(store.records[0]) == "no response")
 }

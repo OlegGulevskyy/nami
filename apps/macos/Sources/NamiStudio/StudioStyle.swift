@@ -2,27 +2,27 @@ import AppKit
 import SwiftUI
 
 enum StudioStyle {
-    static let paperColor = NSColor(light: (0.969, 0.976, 0.961), dark: (0.090, 0.114, 0.098))
+    static let paperColor = NSColor(light: (0.980, 0.980, 0.988), dark: (0.106, 0.106, 0.118))
     static let paper = Color(nsColor: paperColor)
-    static let sidebar = Color(light: (0.937, 0.949, 0.918), dark: (0.071, 0.090, 0.078))
+    static let sidebar = Color(light: (0.949, 0.949, 0.969), dark: (0.078, 0.078, 0.090))
     /// Cards and fields that sit on top of `paper`.
-    static let surface = Color(light: (1, 1, 1), dark: (0.118, 0.145, 0.129))
-    static let soft = Color(light: (0.921, 0.941, 0.898), dark: (0.137, 0.169, 0.149))
-    static let selection = Color(light: (0.875, 0.906, 0.843), dark: (0.133, 0.235, 0.173))
-    static let ink = Color(light: (0.165, 0.220, 0.184), dark: (0.910, 0.941, 0.918))
-    static let quiet = Color(light: (0.447, 0.498, 0.439), dark: (0.608, 0.667, 0.627))
+    static let surface = Color(light: (1, 1, 1), dark: (0.137, 0.137, 0.153))
+    static let soft = Color(light: (0.937, 0.937, 0.957), dark: (0.165, 0.165, 0.184))
+    static let selection = Color(light: (0.910, 0.902, 0.980), dark: (0.224, 0.224, 0.278))
+    static let ink = Color(light: (0.153, 0.153, 0.196), dark: (0.937, 0.937, 0.957))
+    static let quiet = Color(light: (0.427, 0.427, 0.494), dark: (0.655, 0.655, 0.706))
     /// Text, icons, and switches.
-    static let green = Color(light: (0.204, 0.341, 0.251), dark: (0.439, 0.812, 0.576))
-    /// Fills behind white labels, deeper than `green` in dark mode so the label stays legible.
-    static let greenFill = Color(light: (0.204, 0.341, 0.251), dark: (0.216, 0.576, 0.353))
-    static let line = Color(light: (0.867, 0.890, 0.847), dark: (0.188, 0.227, 0.204))
+    static let accent = Color(light: (0.337, 0.310, 0.659), dark: (0.690, 0.702, 0.980))
+    /// Fills behind white labels, deeper than `accent` in dark mode so the label stays legible.
+    static let accentFill = Color(light: (0.376, 0.349, 0.733), dark: (0.376, 0.388, 0.733))
+    static let line = Color(light: (0.863, 0.863, 0.898), dark: (0.231, 0.231, 0.263))
     static var divider: some View { Rectangle().fill(line).frame(height: 1) }
 
     /// The floating indicator is always dark, whatever the app's appearance.
     enum Indicator {
-        static let background = Color(red: 0.165, green: 0.220, blue: 0.184)
-        static let foreground = Color(red: 0.969, green: 0.976, blue: 0.961)
-        static let accent = Color(red: 0.875, green: 0.906, blue: 0.843)
+        static let background = Color(red: 0.106, green: 0.106, blue: 0.118)
+        static let foreground = Color(red: 0.937, green: 0.937, blue: 0.957)
+        static let accent = Color(red: 0.690, green: 0.702, blue: 0.980)
     }
 }
 
@@ -75,7 +75,7 @@ extension View {
     func studioProminentButton() -> some View {
         Group {
             if #available(macOS 26, *) { buttonStyle(.glassProminent) } else { buttonStyle(.borderedProminent) }
-        }.tint(StudioStyle.greenFill)
+        }.tint(StudioStyle.accentFill)
     }
 }
 
@@ -106,7 +106,7 @@ struct StudioKeycap: View {
     let text: String
     var body: some View {
         Text(text).font(.system(size: 14, design: .rounded))
-            .foregroundStyle(StudioStyle.green)
+            .foregroundStyle(StudioStyle.accent)
             .padding(.horizontal, 12).frame(minWidth: 34, minHeight: 31)
             .background(StudioStyle.paper, in: RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(StudioStyle.line))
@@ -118,7 +118,7 @@ struct StudioKeycap: View {
 struct StudioToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Toggle(isOn: configuration.$isOn) { configuration.label }
-            .toggleStyle(.switch).tint(StudioStyle.green)
+            .toggleStyle(.switch).tint(StudioStyle.accent)
     }
 }
 

@@ -85,7 +85,7 @@ struct ActionsView: View {
             }
             HStack(spacing: 12) {
                 Button { draft?.steps.append(ActionStep()) } label: { Label("Add step", systemImage: "plus") }
-                    .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(StudioStyle.green)
+                    .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(StudioStyle.accent)
                 Spacer()
                 Button("Cancel") { draft = nil }
                     .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(StudioStyle.quiet)
@@ -144,7 +144,7 @@ struct ActionsView: View {
             Text("How actions work").font(.system(size: 13, weight: .semibold))
             Text("Start a recording with one of an action’s phrases. Nami runs its steps in order instead of pasting your words.")
             Text("“Open Excel repo”")
-                .foregroundStyle(StudioStyle.green)
+                .foregroundStyle(StudioStyle.accent)
             Text("A step can open a link, app, file, or folder, optionally in a chosen app, run a Shortcut, or run a shell command.")
             Text("Put {{ }} in a step to use the words said after the phrase, e.g. github.com/search?q={{query}}. Without it, the phrase must be all you say.")
             Text("Matching is word for word, not translated: add the phrases in each language you speak, e.g. “open Excel repo, открой репозиторий Excel”.")

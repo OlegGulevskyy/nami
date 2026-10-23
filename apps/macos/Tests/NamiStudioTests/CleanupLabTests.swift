@@ -1,9 +1,6 @@
 import Foundation
-import AppKit
-import SwiftUI
 import Testing
 import NamiCore
-import NamiAudio
 @testable import NamiStudio
 
 private func cleanupTestDirectory() -> URL {
@@ -144,53 +141,4 @@ private actor RecordingCleanupProcessor: TextProcessor {
     lab.compare()
     #expect(!lab.isBusy)
     #expect(try Data(contentsOf: file) == data)
-}
-
-private struct PreviewCleanupProcessor: TextProcessor {
-    var identifier = "qwen3-preview"
-    func prepare() async throws {}
-    func process(_ request: CleanupRequest) async throws -> String { "Can you check the Nami deployment? We need two instances." }
-}
-
-/// Renders only the new view with synthetic data; does not capture the desktop.
-@Test(.enabled(if: ProcessInfo.processInfo.environment["NAMI_CLEANUP_SNAPSHOT_DIR"] != nil))
-@MainActor func cleanupLabRenderPreview() async throws {
-    let directory = cleanupTestDirectory()
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let output = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["NAMI_CLEANUP_SNAPSHOT_DIR"]))
-    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-    _ = NSApplication.shared
-    let studio = StudioSession(project: directory, historyDirectory: directory.appendingPathComponent("History"),
-        permissions: StudioPermissions(microphoneStatus: { .authorized }, inputMonitoringStatus: { true },
-            requestMicrophone: { false }, requestInputMonitoring: { false }, openSettings: { _ in false }),
-        pastePreparer: { { _, _ in .targetUnavailable } },
-        cleanupProcessors: [.qwen: PreviewCleanupProcessor(),
-                            .qwen17: PreviewCleanupProcessor(identifier: "qwen3-1.7b-preview")],
-        captureBuilder: { _ in PreviewAudioCapture() }, clipboardWriter: { _ in true })
-    let lab = studio.debugging.cleanupLab
-    studio.debugging.page = .cleanup
-    lab.compareQwen17 = true
-    lab.input = "um can you check the name me deployment I think I think we need two instances"
-    lab.addVocabulary(heard: "name me", replacement: "Nami")
-    lab.compare()
-    try await awaitCleanup(lab)
-    for size in [NSSize(width: 760, height: 760), NSSize(width: 1300, height: 1100)] {
-        let view = NSHostingView(rootView: InternalDebuggingView(session: studio, lab: studio.debugging)
-            .frame(width: size.width, height: size.height)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .environment(\.colorScheme, .light))
-        view.appearance = NSAppearance(named: .aqua)
-        view.frame = NSRect(origin: .zero, size: size)
-        view.layoutSubtreeIfNeeded()
-        let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: bitmap)
-        let data = try #require(bitmap.representation(using: .png, properties: [:]))
-        try data.write(to: output.appendingPathComponent("cleanup-\(Int(size.width)).png"))
-    }
-}
-
-@MainActor private final class PreviewAudioCapture: AudioCapturing {
-    let inputDescription = "Preview"
-    func start() async throws -> AsyncThrowingStream<AudioChunk, Error> { throw EngineError.noAudio }
-    func stop() {}
 }
