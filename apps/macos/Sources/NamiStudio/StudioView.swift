@@ -74,6 +74,11 @@ public struct StudioView: View {
     @State private var runPendingDeletion: RecordingRun.ID?
     /// Settings reopens on the tab last shown.
     @State private var lastSettingsTab: Page = .settings
+    /// False while the window is closed. SwiftUI keeps a closed window's views and goes on
+    /// updating them, and on macOS 27 selectable text created then draws upside down once the
+    /// window reopens. History is built only while the window is open, so transcripts dictated
+    /// into other apps in the meantime are laid out when it reopens.
+    @State private var windowOpen = true
 
     public init(session: StudioSession, page: Binding<Page>) {
         self.session = session
@@ -85,6 +90,8 @@ public struct StudioView: View {
             studio(availableWidth: geometry.size.width)
         }
         .frame(minWidth: 760, minHeight: 600)
+        .onAppear { windowOpen = true }
+        .onDisappear { windowOpen = false }
         .onChange(of: session.settings.appearance, initial: true) { NSApp.appearance = session.settings.appearance.nsAppearance }
         .background(StudioWindowChrome()).ignoresSafeArea(.container, edges: .top)
     }
@@ -194,7 +201,7 @@ public struct StudioView: View {
             ActionsView(session: session)
         } else if let settingsPage = item.settingsPage {
             StudioSettingsView(session: session, page: settingsPage)
-        } else {
+        } else if windowOpen {
             recordingHistory
                 .disabled(session.permissions.needsSetup)
                 .allowsHitTesting(!session.permissions.needsSetup)
